@@ -1,0 +1,135 @@
+from fastapi import APIRouter, HTTPException, Query
+
+from app.modules import MODULES, module_to_dict, resolve_module
+from app.crypto.rsa import decrypt_from_b64, public_key_to_pem
+from app.models.message import ClientRegistration, EncryptedPayload, InboundMessage, ResponseBody
+from app.services.message_service import message_service
+
+router = APIRouter(prefix="/api/v1")
+
+
+@router.get("/modules")
+def list_modules() -> dict:
+    return {"modules": [module_to_dict(m) for m in MODULES]}
+
+
+@router.get("/modules/{module_id}")
+def get_module(module_id: str) -> dict:
+    for module in MODULES:
+        if module.id == module_id:
+            return module_to_dict(module)
+    raise HTTPException(status_code=404, detail=f"Module not found: {module_id}")
+
+
+@router.get("/keys/public")
+def get_public_key() -> dict[str, str]:
+    from app.main import server_public_key
+
+    return {"public_key": public_key_to_pem(server_public_key)}
+
+
+@router.post("/messages/local")
+def post_message_local(msg: InboundMessage) -> dict:
+    """Plaintext submit for the built-in web UI (same origin)."""
+    try:
+        data = message_service.create_message(msg)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    mod = resolve_module(msg.name, msg.target)
+    return {"ok": True, "message": data, "module": mod.id if mod else None}
+
+
+@router.post("/messages")
+def post_message(body: EncryptedPayload) -> dict:
+    from app.main import server_private_key
+
+    try:
+        raw = decrypt_from_b64(body.encrypted, server_private_key)
+        msg = InboundMessage.model_validate_json(raw)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid encrypted message: {exc}") from exc
+
+    try:
+        data = message_service.create_message(msg)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    mod = resolve_module(msg.name, msg.target)
+    return {"ok": True, "message": data, "module": mod.id if mod else None}
+
+
+@router.get("/messages")
+def list_messages(
+    target: str | None = Query(None),
+    name: str | None = Query(None),
+    status: str | None = Query(None),
+    msg_type: str | None = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    encrypted_for: str | None = Query(None, description="Client id to encrypt response for"),
+) -> dict:
+    items = message_service.list_messages(
+        target=target,
+        name=name,
+        status=status,
+        msg_type=msg_type,
+        limit=limit,
+    )
+    if encrypted_for:
+        encrypted = message_service.encrypt_for_client(encrypted_for, {"messages": items})
+        if encrypted is None:
+            raise HTTPException(status_code=404, detail=f"Client not registered: {encrypted_for}")
+        return {"encrypted": encrypted}
+    return {"messages": items}
+
+
+@router.get("/messages/{message_id}")
+def get_message(
+    message_id: str,
+    encrypted_for: str | None = Query(None),
+) -> dict:
+    data = message_service.get_message(message_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if encrypted_for:
+        encrypted = message_service.encrypt_for_client(encrypted_for, data)
+        if encrypted is None:
+            raise HTTPException(status_code=404, detail=f"Client not registered: {encrypted_for}")
+        return {"encrypted": encrypted}
+    return data
+
+
+@router.post("/messages/{message_id}/respond")
+def respond_message(message_id: str, body: EncryptedPayload) -> dict:
+    from app.main import server_private_key
+
+    try:
+        raw = decrypt_from_b64(body.encrypted, server_private_key)
+        response = ResponseBody.model_validate_json(raw)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid encrypted response: {exc}") from exc
+
+    return _handle_response(message_id, response)
+
+
+@router.post("/messages/{message_id}/respond/local")
+def respond_message_local(message_id: str, body: ResponseBody) -> dict:
+    """Plaintext respond endpoint for the built-in web UI (same origin)."""
+    return _handle_response(message_id, body)
+
+
+def _handle_response(message_id: str, response: ResponseBody) -> dict:
+    if response.ref_id != message_id:
+        raise HTTPException(status_code=400, detail="ref_id does not match message_id")
+
+    try:
+        data = message_service.respond(response)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return {"ok": True, "message": data}
+
+
+@router.post("/clients/register")
+def register_client(body: ClientRegistration) -> dict:
+    return message_service.register_client(body.client_id, body.public_key)

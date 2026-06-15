@@ -1,0 +1,16 @@
+[Unit]
+Description=HomeAgent Server Center
+After=network.target
+
+[Service]
+Type=simple
+User=homeagent
+WorkingDirectory=/opt/homeagent/Server_center
+Environment=SC_HOST=0.0.0.0
+Environment=SC_PORT=8765
+ExecStart=/opt/homeagent/Server_center/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8765
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

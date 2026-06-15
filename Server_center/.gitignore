@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Data & keys
+data/
+keys/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Build output is tracked only after build; static assets from vite
+app/static/assets/
+
+# IDE
+.idea/
+.vscode/
+*.swp
