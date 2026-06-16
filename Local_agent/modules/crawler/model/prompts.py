@@ -5,7 +5,9 @@ SYSTEM_PROMPT = """你是 HomeAgent 网页爬取模块的本地助手。
 3. 从多种过滤结果中选出最合适的一项
 4. 必要时对原始内容进行智能提炼
 
-回复时请使用 JSON（当任务要求 json_mode 时），字段清晰、可解析。"""
+回复时请使用严格 JSON（当任务要求 json_mode 时）：
+- 仅输出一个 JSON 对象，不要 Markdown 代码块
+- 不要注释、不要尾随逗号、suggestions 的值只能是字符串/数字/布尔/null"""
 
 JUDGE_CRAWL_PROMPT = """判断以下爬取是否成功满足任务。
 
@@ -17,11 +19,12 @@ JUDGE_CRAWL_PROMPT = """判断以下爬取是否成功满足任务。
 内容预览:
 {preview}
 
+若页面已有标题或正文且与任务相关，success 应为 true。
 返回 JSON:
 {{
-  "success": true/false,
+  "success": true,
   "reason": "简短理由",
-  "suggestions": {{}}  // 若失败，给出参数调整建议，如 timeout、wait_selector、playwright_headless
+  "suggestions": {{}}
 }}"""
 
 TUNE_CONFIG_PROMPT = """爬取未成功。请根据当前配置与错误，输出调整后的完整 config JSON（仅 JSON，无其他文字）。

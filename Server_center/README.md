@@ -470,7 +470,17 @@ ws://your-server:8765/ws/{target}
 {
   "query": "HomeAgent 架构是什么？",
   "answer": "HomeAgent 由多个模块组成…",
-  "sources": [{ "title": "README", "url": "..." }]
+  "sources": [
+    {
+      "title": "README",
+      "url": "...",
+      "score": 0.87,
+      "snippet": "召回的原文片段…",
+      "doc_id": "doc_abc",
+      "chunk_id": "doc_abc__xyz",
+      "chunk_index": 0
+    }
+  ]
 }
 ```
 

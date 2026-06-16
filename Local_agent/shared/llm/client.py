@@ -47,8 +47,15 @@ class LLMClient:
         *,
         model: str | None = None,
         temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
-        raw = await self.chat(messages, model=model, temperature=temperature, json_mode=True)
+        raw = await self.chat(
+            messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            json_mode=True,
+        )
         try:
             return json.loads(raw)
         except json.JSONDecodeError:

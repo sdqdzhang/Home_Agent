@@ -13,12 +13,16 @@ from modules.crawler.service import CrawlerService
 from modules.env import MODULE_ID as ENV_ID
 from modules.env.router import router as env_router
 from modules.env.service import EnvService
+from modules.rag import MODULE_ID as RAG_ID
+from modules.rag.router import router as rag_router
+from modules.rag.service import RagService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 crawler_service: CrawlerService | None = None
 env_service: EnvService | None = None
+rag_service: RagService | None = None
 _ws_listeners: list[WebSocketListener] = []
 
 
@@ -71,20 +75,23 @@ def _dedupe_ws_handler(handler, *, ttl_seconds: float = 120):
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    global crawler_service, env_service, _ws_listeners
+    global crawler_service, env_service, rag_service, _ws_listeners
 
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     settings.keys_dir.mkdir(parents=True, exist_ok=True)
 
     crawler_client = await _register_module_client("网页爬取模块", "crawler")
     env_client = await _register_module_client("环境感知模块", "env")
+    rag_client = await _register_module_client("RAG模块", "rag")
 
     crawler_service = CrawlerService(server_client=crawler_client)
     env_service = EnvService(server_client=env_client)
+    rag_service = RagService(server_client=rag_client)
     await env_service.start(use_model=True)
 
     await _start_ws_listeners((CRAWLER_ID,), _dedupe_ws_handler(crawler_service.handle_incoming_message))
     await _start_ws_listeners((ENV_ID,), _dedupe_ws_handler(env_service.handle_incoming_message))
+    await _start_ws_listeners((RAG_ID,), _dedupe_ws_handler(rag_service.handle_incoming_message))
 
     yield
 
@@ -96,13 +103,14 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="HomeAgent Local Agent",
-    description="本地智能体服务 — 含网页爬取、环境感知等模块",
+    description="本地智能体服务 — 含网页爬取、环境感知、RAG 等模块",
     version="0.2.0",
     lifespan=lifespan,
 )
 
 app.include_router(crawler_router)
 app.include_router(env_router)
+app.include_router(rag_router)
 
 
 @app.get("/health")
@@ -112,5 +120,6 @@ def health() -> dict[str, object]:
         "modules": {
             "crawler": crawler_service is not None,
             "env": env_service is not None,
+            "rag": rag_service is not None,
         },
     }
