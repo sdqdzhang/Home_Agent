@@ -5,11 +5,14 @@ import { connectWebSocket, fetchHealth, fetchMessages, sendMessageLocal, WS_TARG
 import AgentSidebar from './components/AgentSidebar.vue'
 import ChatHeader from './components/ChatHeader.vue'
 import ChatInput from './components/ChatInput.vue'
+import EnvWorkspace from './components/EnvWorkspace.vue'
 import MessageList from './components/MessageList.vue'
 import {
   agentMood,
   belongsToAgent,
   buildUserTextMessage,
+  buildScreenshotRequest,
+  buildCameraRequest,
   globalEmotionMood,
   sortMessagesAsc,
 } from './utils/messages.js'
@@ -24,8 +27,12 @@ const healthy = ref(true)
 const error = ref('')
 const lastReadAt = ref(Object.fromEntries(agents.map((a) => [a.id, 0])))
 
-let ws = null
+/** WebSocket 只订阅 user_ui；服务端会向 target + channel 双播，多订频道无必要 */
+const WS_CHANNELS = [WS_TARGET]
+
+let wsSockets = []
 let healthTimer = null
+let pollTimer = null
 
 const selectedAgent = computed(() => agents.find((a) => a.id === selectedAgentId.value) || agents[0])
 
@@ -37,9 +44,20 @@ const currentMood = computed(() => agentMood(allMessages.value, selectedAgent.va
 const globalMood = computed(() => globalEmotionMood(allMessages.value))
 
 function upsertMessage(item) {
+  if (!item?.id) return
   const idx = allMessages.value.findIndex((m) => m.id === item.id)
-  if (idx >= 0) allMessages.value[idx] = item
-  else allMessages.value.push(item)
+  if (idx >= 0) {
+    const next = [...allMessages.value]
+    next[idx] = { ...item, channel: item.channel || next[idx].channel }
+    allMessages.value = next
+  } else {
+    allMessages.value = [...allMessages.value, item]
+  }
+}
+
+function mergeMessages(incoming) {
+  if (!Array.isArray(incoming)) return
+  for (const msg of incoming) upsertMessage(msg)
 }
 
 function markAgentRead(agentId) {
@@ -60,11 +78,21 @@ async function loadMessages() {
   loading.value = true
   error.value = ''
   try {
-    allMessages.value = await fetchMessages({ target: WS_TARGET, limit: 300 })
+    const msgs = await fetchMessages({ target: WS_TARGET, limit: 300 })
+    allMessages.value = msgs
   } catch (e) {
     error.value = e.message
   } finally {
     loading.value = false
+  }
+}
+
+async function refreshMessagesQuiet() {
+  try {
+    const msgs = await fetchMessages({ target: WS_TARGET, limit: 300 })
+    mergeMessages(msgs)
+  } catch {
+    /* 静默轮询失败不打断 UI */
   }
 }
 
@@ -83,21 +111,59 @@ function handleWsMessage(payload) {
   }
 }
 
-function connect() {
-  ws = connectWebSocket(WS_TARGET, {
-    onOpen: () => { wsConnected.value = true },
-    onClose: () => {
-      wsConnected.value = false
-      setTimeout(connect, 3000)
-    },
-    onMessage: handleWsMessage,
-  })
+function connectAll() {
+  wsSockets.forEach((ws) => ws?.close())
+  wsSockets = []
+
+  const openChannels = new Set()
+
+  const handleClose = (channel) => {
+    openChannels.delete(channel)
+    wsConnected.value = openChannels.size > 0
+    if (openChannels.size === 0) {
+      setTimeout(connectAll, 3000)
+    }
+  }
+
+  for (const channel of WS_CHANNELS) {
+    const ws = connectWebSocket(channel, {
+      onOpen: () => {
+        openChannels.add(channel)
+        wsConnected.value = true
+      },
+      onClose: () => handleClose(channel),
+      onMessage: handleWsMessage,
+    })
+    wsSockets.push(ws)
+  }
 }
 
 async function onSend(text, attachments) {
   error.value = ''
   try {
     const msg = buildUserTextMessage(selectedAgentId.value, text, attachments)
+    const result = await sendMessageLocal(msg)
+    upsertMessage(result.message)
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
+async function requestScreenshot() {
+  error.value = ''
+  try {
+    const msg = buildScreenshotRequest('env')
+    const result = await sendMessageLocal(msg)
+    upsertMessage(result.message)
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
+async function requestCamera() {
+  error.value = ''
+  try {
+    const msg = buildCameraRequest('env')
     const result = await sendMessageLocal(msg)
     upsertMessage(result.message)
   } catch (e) {
@@ -113,22 +179,33 @@ watch(selectedAgentId, (id) => {
   if (mobileView.value === 'chat') markAgentRead(id)
 })
 
+watch(selectedAgentId, (id) => {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+  if (id === 'env') {
+    pollTimer = setInterval(refreshMessagesQuiet, 8000)
+  }
+})
+
 onMounted(async () => {
   await loadMessages()
-  connect()
+  connectAll()
   await checkHealth()
   healthTimer = setInterval(checkHealth, 30000)
 })
 
 onUnmounted(() => {
-  ws?.close()
+  wsSockets.forEach((ws) => ws?.close())
+  wsSockets = []
   if (healthTimer) clearInterval(healthTimer)
+  if (pollTimer) clearInterval(pollTimer)
 })
 </script>
 
 <template>
   <div class="flex h-full w-full overflow-hidden">
-    <!-- 左侧列表：桌面常驻，移动端首屏 -->
     <div
       class="h-full shrink-0 transition-panel duration-300 ease-out md:relative md:block md:w-sidebar"
       :class="
@@ -148,7 +225,6 @@ onUnmounted(() => {
       />
     </div>
 
-    <!-- 右侧主工作区 -->
     <main
       class="flex h-full min-w-0 flex-1 flex-col bg-surface transition-panel duration-300 ease-out"
       :class="
@@ -169,14 +245,27 @@ onUnmounted(() => {
 
       <p v-if="error" class="bg-red-500/10 px-4 py-2 text-center text-xs text-red-300">{{ error }}</p>
 
-      <MessageList
-        :messages="chatMessages"
+      <EnvWorkspace
+        v-if="selectedAgentId === 'env'"
+        :messages="allMessages"
         :loading="loading"
         :agent="selectedAgent"
+        :live="wsConnected"
+        @send="onSend"
+        @screenshot="requestScreenshot"
+        @camera="requestCamera"
         @responded="onResponded"
       />
 
-      <ChatInput @send="onSend" />
+      <template v-else>
+        <MessageList
+          :messages="chatMessages"
+          :loading="loading"
+          :agent="selectedAgent"
+          @responded="onResponded"
+        />
+        <ChatInput @send="onSend" />
+      </template>
     </main>
   </div>
 </template>

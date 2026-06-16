@@ -109,11 +109,19 @@ sudo systemctl status server-center
 | `message` | object | 业务内容，`text` + 任意 `payload` |
 | `timestamp` | int | Unix 秒级时间戳 |
 
-**HTTP 提交格式**（RSA 加密后）：
+**HTTP 提交格式**（RSA 加密后，超长自动分块）：
 
+单块：
 ```json
 { "encrypted": "<base64 ciphertext>" }
 ```
+
+分块（明文超过约 190 字节时）：
+```json
+{ "encrypted_chunks": ["<base64>", "<base64>", "..."] }
+```
+
+服务端与 Local Agent `shared/server_center` 均支持单块与分块互操作。
 
 ### 输出（服务端 → 查询方 / Web UI）
 
@@ -349,6 +357,7 @@ ws://your-server:8765/ws/{target}
 
 - 密钥首次启动自动生成于 `keys/`，**勿提交到版本库**。
 - 数据库文件：`data/messages.db`。
+- **每次启动服务时会自动清空 `messages` 表**（客户端注册 `clients` 表保留）；重启后 Web UI 历史消息为空。
 - 前端构建产物输出到 `app/static/`，由 FastAPI 托管 SPA。
 
 ---
@@ -371,7 +380,9 @@ ws://your-server:8765/ws/{target}
 | `text` | `TextBubble.vue` | 聊天气泡；`name=user_ui` 或 `message.role=user` 靠右（靛蓝），否则靠左（深灰） |
 | `approval_request` | `ApprovalCard.vue` | 通宽警告卡片，高亮命令代码，批准/拒绝按钮 |
 | `execution_log` | `ExecutionLog.vue` | 可折叠手风琴，展开为黑底绿字控制台 |
-| `system_status` | `SystemStatus.vue` | 静默灰色小字，**不触发**左侧未读红点 |
+| `system_status` | `SystemStatus.vue` | 环境指标卡片；`alert=true` 时左侧红灯 |
+| `desktop_screenshot` | `DesktopScreenshot.vue` | 远程桌面截图预览 |
+| `camera_capture` | `DesktopScreenshot.vue` | 摄像头拍照预览 |
 | `persona_state` | `PersonaState.vue` | 情感/性格状态卡片，**不触发**未读 |
 | `rag_result` | `RagResult.vue` | RAG 查询、回答与来源列表 |
 | `reflection_note` | `ReflectionNote.vue` | 自省：问题 / 分析 / 纠正 |
@@ -401,9 +412,47 @@ ws://your-server:8765/ws/{target}
 }
 ```
 
-**system_status**
+**system_status**（环境感知模块，字段细化见 Local_agent `modules/env/README.md`）
 ```json
-{ "text": "CPU 42% · 内存 3.2GB · 网络正常" }
+{
+  "report_type": "snapshot",
+  "text": "CPU 42% · 内存 68% · 网络正常",
+  "alert": false,
+  "alert_reason": "",
+  "snapshot": {
+    "cpu_percent": 42,
+    "memory_percent": 68,
+    "network": { "upload_mbps": 0.1, "download_mbps": 1.2, "ping": { "latency_ms": 35, "packet_loss_percent": 0 } },
+    "disks": [],
+    "top_processes": []
+  },
+  "llm_summary": { "summary": "…", "health_score": 88, "alert": false }
+}
+```
+
+**desktop_screenshot**（环境感知模块，按需远程截图）
+```json
+{
+  "text": "远程桌面截图",
+  "capture_type": "desktop",
+  "format": "jpeg",
+  "width": 1920,
+  "height": 1080,
+  "image_base64": "..."
+}
+```
+
+**camera_capture**（环境感知模块，按需摄像头拍照）
+```json
+{
+  "text": "摄像头拍照",
+  "capture_type": "camera",
+  "camera_index": 0,
+  "format": "jpeg",
+  "width": 1280,
+  "height": 720,
+  "image_base64": "..."
+}
 ```
 
 **persona_state**

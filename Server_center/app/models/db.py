@@ -47,6 +47,14 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
 
 
+def clear_messages() -> int:
+    """清空所有消息记录（保留 clients 等其它表）。"""
+    with SessionLocal() as db:
+        deleted = db.query(MessageRecord).delete()
+        db.commit()
+        return deleted
+
+
 def record_to_dict(record: MessageRecord) -> dict[str, Any]:
     import json
 

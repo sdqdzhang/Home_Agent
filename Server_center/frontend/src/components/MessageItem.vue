@@ -1,5 +1,6 @@
 <script setup>
 import ApprovalCard from './messages/ApprovalCard.vue'
+import DesktopScreenshot from './messages/DesktopScreenshot.vue'
 import ExecutionLog from './messages/ExecutionLog.vue'
 import MemoryRecord from './messages/MemoryRecord.vue'
 import PersonaState from './messages/PersonaState.vue'
@@ -19,6 +20,8 @@ const renderers = {
   approval_request: ApprovalCard,
   execution_log: ExecutionLog,
   system_status: SystemStatus,
+  desktop_screenshot: DesktopScreenshot,
+  camera_capture: DesktopScreenshot,
   persona_state: PersonaState,
   rag_result: RagResult,
   reflection_note: ReflectionNote,

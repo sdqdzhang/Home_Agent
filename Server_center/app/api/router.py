@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query
 
 from app.modules import MODULES, module_to_dict, resolve_module
-from app.crypto.rsa import decrypt_from_b64, public_key_to_pem
+from app.crypto.rsa import decrypt_payload_b64, encrypt_payload_b64, public_key_to_pem
 from app.models.message import ClientRegistration, EncryptedPayload, InboundMessage, ResponseBody
 from app.services.message_service import message_service
 
@@ -29,10 +29,10 @@ def get_public_key() -> dict[str, str]:
 
 
 @router.post("/messages/local")
-def post_message_local(msg: InboundMessage) -> dict:
+async def post_message_local(msg: InboundMessage) -> dict:
     """Plaintext submit for the built-in web UI (same origin)."""
     try:
-        data = message_service.create_message(msg)
+        data = await message_service.create_message(msg)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -41,17 +41,17 @@ def post_message_local(msg: InboundMessage) -> dict:
 
 
 @router.post("/messages")
-def post_message(body: EncryptedPayload) -> dict:
+async def post_message(body: EncryptedPayload) -> dict:
     from app.main import server_private_key
 
     try:
-        raw = decrypt_from_b64(body.encrypted, server_private_key)
+        raw = decrypt_payload_b64(body.model_dump(exclude_none=True), server_private_key)
         msg = InboundMessage.model_validate_json(raw)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid encrypted message: {exc}") from exc
 
     try:
-        data = message_service.create_message(msg)
+        data = await message_service.create_message(msg)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -79,7 +79,7 @@ def list_messages(
         encrypted = message_service.encrypt_for_client(encrypted_for, {"messages": items})
         if encrypted is None:
             raise HTTPException(status_code=404, detail=f"Client not registered: {encrypted_for}")
-        return {"encrypted": encrypted}
+        return encrypted
     return {"messages": items}
 
 
@@ -95,39 +95,37 @@ def get_message(
         encrypted = message_service.encrypt_for_client(encrypted_for, data)
         if encrypted is None:
             raise HTTPException(status_code=404, detail=f"Client not registered: {encrypted_for}")
-        return {"encrypted": encrypted}
+        return encrypted
     return data
 
 
-@router.post("/messages/{message_id}/respond")
-def respond_message(message_id: str, body: EncryptedPayload) -> dict:
-    from app.main import server_private_key
-
-    try:
-        raw = decrypt_from_b64(body.encrypted, server_private_key)
-        response = ResponseBody.model_validate_json(raw)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid encrypted response: {exc}") from exc
-
-    return _handle_response(message_id, response)
-
-
-@router.post("/messages/{message_id}/respond/local")
-def respond_message_local(message_id: str, body: ResponseBody) -> dict:
-    """Plaintext respond endpoint for the built-in web UI (same origin)."""
-    return _handle_response(message_id, body)
-
-
-def _handle_response(message_id: str, response: ResponseBody) -> dict:
+async def _handle_response(message_id: str, response: ResponseBody) -> dict:
     if response.ref_id != message_id:
         raise HTTPException(status_code=400, detail="ref_id does not match message_id")
 
     try:
-        data = message_service.respond(response)
+        return {"ok": True, "message": await message_service.respond(response)}
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    return {"ok": True, "message": data}
+
+@router.post("/messages/{message_id}/respond")
+async def respond_message(message_id: str, body: EncryptedPayload) -> dict:
+    from app.main import server_private_key
+
+    try:
+        raw = decrypt_payload_b64(body.model_dump(exclude_none=True), server_private_key)
+        response = ResponseBody.model_validate_json(raw)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid encrypted response: {exc}") from exc
+
+    return await _handle_response(message_id, response)
+
+
+@router.post("/messages/{message_id}/respond/local")
+async def respond_message_local(message_id: str, body: ResponseBody) -> dict:
+    """Plaintext respond endpoint for the built-in web UI (same origin)."""
+    return await _handle_response(message_id, body)
 
 
 @router.post("/clients/register")

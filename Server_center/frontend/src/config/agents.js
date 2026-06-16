@@ -45,7 +45,7 @@ export const AGENTS = [
     defaultMood: '观察中',
     icon: '📡',
     description: '系统与环境状态静默上报',
-    defaultMsgTypes: ['system_status'],
+    defaultMsgTypes: ['system_status', 'desktop_screenshot', 'camera_capture'],
   },
   {
     id: 'memory',

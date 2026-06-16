@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Any
 
-from app.server_client.message_client import ServerCenterClient
+from shared.server_center.client import ServerCenterClient
 from modules.crawler import DEFAULT_MSG_TYPE, MODULE_NAME
 from modules.crawler.chat import ConversationMemory
 from modules.crawler.config import crawler_settings

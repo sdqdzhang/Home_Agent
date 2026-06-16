@@ -18,7 +18,8 @@ class InboundMessage(BaseModel):
 
 
 class EncryptedPayload(BaseModel):
-    encrypted: str
+    encrypted: str | None = None
+    encrypted_chunks: list[str] | None = None
 
 
 class ResponseBody(BaseModel):

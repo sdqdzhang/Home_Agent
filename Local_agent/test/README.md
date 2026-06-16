@@ -17,6 +17,7 @@ pip install -r requirements.txt
 |------|------|------|
 | `test_llm_gui.py` | 测试 `shared/llm` OpenAI 兼容调用 | Ollama 运行中 |
 | `test_crawler_gui.py` | 测试爬取（可切换是否使用模型） | 无模型模式仅需网络 |
+| `test_env_gui.py` | 测试环境感知（含 Server 地址、测试连接、推送） | 推送需 Server Center 运行 |
 
 ### 启动
 
@@ -24,12 +25,14 @@ pip install -r requirements.txt
 # 在 Local_agent 目录下
 python test/test_llm_gui.py
 python test/test_crawler_gui.py
+python test/test_env_gui.py
 ```
 
 Windows 也可双击：
 
 - `test/run_llm.bat`
 - `test/run_crawler.bat`
+- `test/run_env.bat`
 
 ## 爬取：使用模型 vs 不使用模型
 

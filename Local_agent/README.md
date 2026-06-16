@@ -11,16 +11,15 @@ Local_agent/
 │   ├── config.py
 │   └── server_client/      # RSA 加密 + WebSocket
 ├── shared/
-│   └── llm/                # OpenAI 兼容本地模型（默认 Ollama，各模块复用）
+│   ├── llm/                # OpenAI 兼容本地模型
+│   └── server_center/      # Server Center RSA 分块加密 + 消息发送（各模块复用）
 ├── modules/
-│   └── crawler/            # 网页爬取模块
-│       ├── strategies/     # feedparser / httpx+BS4 / Playwright 自适应路由
-│       ├── filters/        # 预设过滤算法
-│       ├── pipeline/       # 爬取编排流程
-│       ├── model/          # 模块内本地模型助手
-│       ├── logging/        # 任务独立日志
-│       ├── storage/        # 任务记录与产物
-│       └── chat/           # 对话记忆
+│   ├── crawler/            # 网页爬取模块
+│   └── env/                # 环境感知模块（高频采集 / 低频汇报）
+│       ├── collectors/     # 系统指标采集
+│       ├── model/          # LLM 运营总结
+│       ├── aggregator.py   # 10 分钟窗口统计压缩
+│       └── screenshot.py   # 按需桌面截图
 ├── data/                   # 运行时数据（勿提交）
 ├── keys/                   # 客户端 RSA 密钥（勿提交）
 └── test/                   # 各模块图形界面测试（tkinter）
@@ -33,6 +32,7 @@ Local_agent/
 ```bash
 python test/test_llm_gui.py      # LLM 调用
 python test/test_crawler_gui.py  # 爬取（可勾选是否使用模型）
+python test/test_env_gui.py      # 环境感知（可勾选是否使用模型）
 ```
 
 ## 快速启动
@@ -76,6 +76,18 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8770
 | GET | `/crawler/jobs` | 任务列表 |
 | GET | `/crawler/jobs/{id}/log` | 读取任务日志 |
 | GET | `/crawler/artifacts` | 产物文件列表 |
+| GET | `/env/status` | **主 Agent 读取**：最新快照 + 压缩统计 + LLM 总结 |
+| POST | `/env/collect` | 手动触发一次采集 |
+| POST | `/env/summary` | 手动触发 10 分钟窗口压缩与总结 |
+| POST | `/env/screenshot` | 按需桌面截图 |
+
+### 主 Agent 读取环境状态
+
+```bash
+curl http://127.0.0.1:8770/env/status
+```
+
+返回 `snapshot`（最新 20s 采集）、`aggregated`（当前窗口压缩）、`llm_summary`（模型/规则总结）、`alert_active`。
 
 ### 爬取示例
 
@@ -95,9 +107,33 @@ curl -X POST http://127.0.0.1:8770/crawler/chat \
 
 ## 与 Server Center 集成
 
+### 网页爬取
+
 - 模块名：`网页爬取模块` / `crawler`
 - 上报类型：`execution_log`
-- 用户从 Web UI 发往爬取模块的 `text` 消息会触发对话；`payload.url` 会触发爬取任务
+
+### 环境感知
+
+- 模块名：`环境感知模块` / `env_sense` / `env`
+- 上报类型：`system_status`（20s 快照、10min 总结、告警）、`desktop_screenshot`（按需截图）
+- 截图等大 payload 使用 RSA 分块加密（`shared/server_center` 统一发送）
+- Web UI 可点「远程截图」；消息 `payload.action=screenshot` 亦可触发
+- `system_status.message.alert=true` 时前端环境模块左侧显示红灯；恢复后 `alert=false` 自动熄灭
+
+详见 [环境感知消息格式](modules/env/README.md)。
+
+### 测试推送到 Server Center
+
+1. 启动 Server Center：`uvicorn app.main:app --port 8765`
+2. 运行 `python test/test_env_gui.py`
+3. 填写地址（如 `http://127.0.0.1:8765`），点 **测试连接**
+4. 勾选 **推送到 Server Center**，点 **采集一次**
+5. 打开 Web UI → 左侧点击 **环境感知模块**（不是主对话）
+6. 可看到 `system_status` 卡片；截图需在前端点 **远程截图**（仅响应服务端请求，test 不主动截图）
+
+### 通用
+
+- 用户从 Web UI 发往各模块的 `text` 消息会触发对应对话或动作
 - 执行过程通过 RSA 加密推送到 `user_ui`
 
 ## 配置
@@ -109,6 +145,9 @@ curl -X POST http://127.0.0.1:8770/crawler/chat \
 | `LA_LLM_BASE_URL` | `http://127.0.0.1:11434/v1` | Ollama OpenAI 端点 |
 | `LA_LLM_MODEL` | `llama3.2` | 模型名 |
 | `LA_CRAWLER_MAX_RETRIES` | `3` | 爬取重试次数 |
+| `LA_ENV_COLLECT_INTERVAL_SECONDS` | `20` | 环境采集间隔 |
+| `LA_ENV_SUMMARY_INTERVAL_SECONDS` | `600` | LLM 总结间隔（10 分钟） |
+| `LA_ENV_PING_TARGET` | `8.8.8.8` | Ping 目标 |
 
 ## 数据位置
 

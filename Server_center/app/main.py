@@ -1,4 +1,5 @@
 import json
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -8,9 +9,11 @@ from fastapi.staticfiles import StaticFiles
 from app.api.router import router
 from app.config import settings
 from app.crypto.rsa import ensure_server_keys
-from app.models.db import init_db
+from app.models.db import clear_messages, init_db
 from app.services.message_service import message_service
 from app.services.ws_manager import ws_manager
+
+logger = logging.getLogger(__name__)
 
 server_private_key = None
 server_public_key = None
@@ -26,6 +29,9 @@ async def lifespan(_: FastAPI):
     )
     message_service.set_keys(server_private_key, server_public_key)
     init_db()
+    deleted = clear_messages()
+    if deleted:
+        logger.info("Cleared %d message(s) from database on startup", deleted)
     yield
 
 

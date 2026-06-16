@@ -11,6 +11,8 @@ OAEP_PADDING = padding.OAEP(
     label=None,
 )
 
+RSA_OAEP_CHUNK_SIZE = 190
+
 
 def generate_keypair(key_size: int = 2048) -> tuple[RSAPrivateKey, RSAPublicKey]:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=key_size)
@@ -19,16 +21,14 @@ def generate_keypair(key_size: int = 2048) -> tuple[RSAPrivateKey, RSAPublicKey]
 
 def save_keypair(private_key: RSAPrivateKey, public_key: RSAPublicKey, keys_dir: Path) -> None:
     keys_dir.mkdir(parents=True, exist_ok=True)
-    private_path = keys_dir / "server_private.pem"
-    public_path = keys_dir / "server_public.pem"
-    private_path.write_bytes(
+    (keys_dir / "client_private.pem").write_bytes(
         private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
             encryption_algorithm=serialization.NoEncryption(),
         )
     )
-    public_path.write_bytes(
+    (keys_dir / "client_public.pem").write_bytes(
         public_key.public_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
@@ -36,20 +36,16 @@ def save_keypair(private_key: RSAPrivateKey, public_key: RSAPublicKey, keys_dir:
     )
 
 
-def load_private_key(keys_dir: Path) -> RSAPrivateKey:
-    path = keys_dir / "server_private.pem"
-    return serialization.load_pem_private_key(path.read_bytes(), password=None)
-
-
-def load_public_key(keys_dir: Path) -> RSAPublicKey:
-    path = keys_dir / "server_public.pem"
-    return serialization.load_pem_public_key(path.read_bytes())
-
-
-def load_public_key_from_pem(pem: str | bytes) -> RSAPublicKey:
-    if isinstance(pem, str):
-        pem = pem.encode()
-    return serialization.load_pem_public_key(pem)
+def ensure_client_keys(keys_dir: Path, key_size: int = 2048) -> tuple[RSAPrivateKey, RSAPublicKey]:
+    private_path = keys_dir / "client_private.pem"
+    public_path = keys_dir / "client_public.pem"
+    if private_path.exists() and public_path.exists():
+        private_key = serialization.load_pem_private_key(private_path.read_bytes(), password=None)
+        public_key = serialization.load_pem_public_key(public_path.read_bytes())
+        return private_key, public_key
+    private_key, public_key = generate_keypair(key_size)
+    save_keypair(private_key, public_key, keys_dir)
+    return private_key, public_key
 
 
 def public_key_to_pem(public_key: RSAPublicKey) -> str:
@@ -59,33 +55,19 @@ def public_key_to_pem(public_key: RSAPublicKey) -> str:
     ).decode()
 
 
-def ensure_server_keys(keys_dir: Path, key_size: int = 2048) -> tuple[RSAPrivateKey, RSAPublicKey]:
-    private_path = keys_dir / "server_private.pem"
-    public_path = keys_dir / "server_public.pem"
-    if private_path.exists() and public_path.exists():
-        return load_private_key(keys_dir), load_public_key(keys_dir)
-    private_key, public_key = generate_keypair(key_size)
-    save_keypair(private_key, public_key, keys_dir)
-    return private_key, public_key
-
-
-def encrypt_bytes(data: bytes, public_key: RSAPublicKey) -> bytes:
-    return public_key.encrypt(data, OAEP_PADDING)
-
-
-def decrypt_bytes(data: bytes, private_key: RSAPrivateKey) -> bytes:
-    return private_key.decrypt(data, OAEP_PADDING)
+def load_public_key_from_pem(pem: str | bytes) -> RSAPublicKey:
+    if isinstance(pem, str):
+        pem = pem.encode()
+    return serialization.load_pem_public_key(pem)
 
 
 def encrypt_to_b64(data: bytes, public_key: RSAPublicKey) -> str:
-    return base64.b64encode(encrypt_bytes(data, public_key)).decode()
+    cipher = public_key.encrypt(data, OAEP_PADDING)
+    return base64.b64encode(cipher).decode()
 
 
 def decrypt_from_b64(data_b64: str, private_key: RSAPrivateKey) -> bytes:
-    return decrypt_bytes(base64.b64decode(data_b64), private_key)
-
-
-RSA_OAEP_CHUNK_SIZE = 190
+    return private_key.decrypt(base64.b64decode(data_b64), OAEP_PADDING)
 
 
 def encrypt_payload_b64(data: bytes, public_key: RSAPublicKey) -> dict[str, str | list[str]]:

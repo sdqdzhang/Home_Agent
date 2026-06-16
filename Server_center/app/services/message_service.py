@@ -16,7 +16,7 @@ class MessageService:
         self._private_key = private_key
         self._public_key = public_key
 
-    def create_message(self, msg: InboundMessage) -> dict[str, Any]:
+    async def create_message(self, msg: InboundMessage) -> dict[str, Any]:
         now = utc_now()
         channel = resolve_channel(msg.name, msg.target)
         status = initial_status(msg.msg_type)
@@ -47,9 +47,9 @@ class MessageService:
         if resolve_module(msg.name, msg.target) is None and msg.name != USER_UI:
             data["unknown_module"] = msg.name
 
-        ws_manager.broadcast(msg.target, {"event": "new_message", "data": data})
+        await ws_manager.broadcast(msg.target, {"event": "new_message", "data": data})
         if channel and channel != msg.target:
-            ws_manager.broadcast(channel, {"event": "new_message", "data": data})
+            await ws_manager.broadcast(channel, {"event": "new_message", "data": data})
         return data
 
     def list_messages(
@@ -71,7 +71,12 @@ class MessageService:
             if msg_type:
                 query = query.filter(MessageRecord.msg_type == msg_type)
             records = query.order_by(MessageRecord.created_at.desc()).limit(limit).all()
-            return [record_to_dict(r) for r in records]
+            items = []
+            for r in records:
+                data = record_to_dict(r)
+                data["channel"] = resolve_channel(data["name"], data["target"])
+                items.append(data)
+            return items
 
     def get_message(self, message_id: str) -> dict[str, Any] | None:
         with SessionLocal() as db:
@@ -80,7 +85,7 @@ class MessageService:
                 return None
             return record_to_dict(record)
 
-    def respond(self, response: ResponseBody) -> dict[str, Any]:
+    async def respond(self, response: ResponseBody) -> dict[str, Any]:
         now = utc_now()
         with SessionLocal() as db:
             record = db.get(MessageRecord, response.ref_id)
@@ -102,10 +107,10 @@ class MessageService:
             data = record_to_dict(record)
 
         data["channel"] = resolve_channel(record.name, record.target)
-        ws_manager.broadcast(record.target, {"event": "message_updated", "data": data})
-        ws_manager.broadcast(record.name, {"event": "response_ready", "data": data})
+        await ws_manager.broadcast(record.target, {"event": "message_updated", "data": data})
+        await ws_manager.broadcast(record.name, {"event": "response_ready", "data": data})
         if data["channel"] not in (record.target, record.name):
-            ws_manager.broadcast(data["channel"], {"event": "message_updated", "data": data})
+            await ws_manager.broadcast(data["channel"], {"event": "message_updated", "data": data})
         return data
 
     def register_client(self, client_id: str, public_key_pem: str) -> dict[str, str]:
@@ -132,15 +137,15 @@ class MessageService:
                 return None
             return record.public_key_pem
 
-    def encrypt_for_client(self, client_id: str, payload: dict[str, Any]) -> str | None:
-        from app.crypto.rsa import encrypt_to_b64, load_public_key_from_pem
+    def encrypt_for_client(self, client_id: str, payload: dict[str, Any]) -> dict[str, str | list[str]] | None:
+        from app.crypto.rsa import encrypt_payload_b64, load_public_key_from_pem
 
         pem = self.get_client_public_key(client_id)
         if not pem:
             return None
         public_key = load_public_key_from_pem(pem)
         raw = json.dumps(payload, ensure_ascii=False).encode()
-        return encrypt_to_b64(raw, public_key)
+        return encrypt_payload_b64(raw, public_key)
 
 
 message_service = MessageService()

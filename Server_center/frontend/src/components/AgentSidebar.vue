@@ -1,7 +1,7 @@
 <script setup>
 import HealthBanner from './HealthBanner.vue'
 import { USER_SENDER } from '../config/agents.js'
-import { belongsToAgent, countsAsUnread, isAgentWorking, isUrgentUnread, messageSummary } from '../utils/messages.js'
+import { belongsToAgent, countsAsUnread, hasEnvAlert, isAgentWorking, isUrgentUnread, messageSummary } from '../utils/messages.js'
 
 const props = defineProps({
   agents: { type: Array, required: true },
@@ -32,6 +32,7 @@ function unreadCount(agent) {
 }
 
 function hasUrgent(agent) {
+  if (hasEnvAlert(props.messages, agent)) return true
   const readAt = props.lastReadAt[agent.id] || 0
   return agentMessages(agent).some(
     (m) => isUrgentUnread(m, agent) && m.timestamp > readAt,
@@ -91,7 +92,7 @@ function working(agent) {
           <span
             v-if="hasUrgent(agent)"
             class="h-2.5 w-2.5 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)]"
-            title="待审批"
+            title="告警 / 待审批"
           />
           <span
             v-else-if="unreadCount(agent) > 0"
