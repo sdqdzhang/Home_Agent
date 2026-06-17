@@ -19,7 +19,8 @@ class CrawlerAssistant:
     """模块内本地模型助手。"""
 
     def __init__(self) -> None:
-        self.llm = get_llm_client()
+        self._pipeline_llm = get_llm_client("crawler.pipeline")
+        self._chat_llm = get_llm_client("crawler.chat")
 
     async def judge_crawl(
         self,
@@ -36,7 +37,7 @@ class CrawlerAssistant:
             error=result.error,
             preview=result.preview(800),
         )
-        return await self.llm.chat_json(
+        return await self._pipeline_llm.chat_json(
             [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -60,7 +61,7 @@ class CrawlerAssistant:
             error=error,
             suggestions=suggestions,
         )
-        tuned = await self.llm.chat_json(
+        tuned = await self._pipeline_llm.chat_json(
             [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -81,7 +82,7 @@ class CrawlerAssistant:
             for c in candidates
         ]
         prompt = PICK_FILTER_PROMPT.format(task=task, url=url, candidates=payload)
-        return await self.llm.chat_json(
+        return await self._pipeline_llm.chat_json(
             [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -102,7 +103,7 @@ class CrawlerAssistant:
             title=result.title,
             content=result.preview(6000),
         )
-        return await self.llm.chat_json(
+        return await self._pipeline_llm.chat_json(
             [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -115,4 +116,4 @@ class CrawlerAssistant:
         messages: list[dict[str, str]] = [{"role": "system", "content": system}]
         messages.extend(history)
         messages.append({"role": "user", "content": user_message})
-        return await self.llm.chat(messages)
+        return await self._chat_llm.chat(messages)

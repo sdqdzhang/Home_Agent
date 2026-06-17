@@ -84,6 +84,14 @@ MODULES: tuple[ModuleDef, ...] = (
         default_msg_types=("reflection_note", "text"),
         icon="🔍",
     ),
+    ModuleDef(
+        id="llm",
+        label="模型配置",
+        names=("本地Agent", "local_agent", "llm"),
+        description="Local Agent LLM 端点与槽位绑定",
+        default_msg_types=("llm_config_result",),
+        icon="⚙️",
+    ),
 )
 
 USER_UI = "user_ui"

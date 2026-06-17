@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from modules.env.config import env_settings
+from shared.llm import get_llm_client
 from shared.llm.client import LLMClient
 
 SYSTEM_PROMPT = """你是远程服务器运维助手。根据压缩后的系统监控 JSON，用中文写一段简洁的运营状况总结（3-6 句）。
@@ -27,8 +28,19 @@ CHAT_SYSTEM_PROMPT = """你是环境感知模块的运维助手。根据提供�
 class EnvAssistant:
     """环境感知模块 LLM 助手：每次总结使用全新对话。"""
 
-    def __init__(self, llm: LLMClient | None = None) -> None:
-        self.llm = llm or LLMClient()
+    def __init__(
+        self,
+        llm: LLMClient | None = None,
+        *,
+        summary_llm: LLMClient | None = None,
+        chat_llm: LLMClient | None = None,
+    ) -> None:
+        if llm is not None:
+            self._summary_llm = llm
+            self._chat_llm = llm
+        else:
+            self._summary_llm = summary_llm or get_llm_client("env.summary")
+            self._chat_llm = chat_llm or get_llm_client("env.chat")
 
     async def summarize(self, aggregated: dict[str, Any], *, use_model: bool = True) -> dict[str, Any]:
         if not use_model:
@@ -40,11 +52,7 @@ class EnvAssistant:
             {"role": "user", "content": f"以下是过去窗口内的压缩监控数据：\n{user_content}"},
         ]
         try:
-            result = await self.llm.chat_json(
-                messages,
-                model=env_settings.llm_model,
-                temperature=env_settings.llm_temperature,
-            )
+            result = await self._summary_llm.chat_json(messages)
             return {
                 "summary": str(result.get("summary", "")),
                 "alert": bool(result.get("alert")),
@@ -120,11 +128,7 @@ class EnvAssistant:
                 "content": f"当前系统状态：\n{context_json}\n\n用户问题：{user_message}",
             },
         ]
-        return await self.llm.chat(
-            messages,
-            model=env_settings.llm_model,
-            temperature=env_settings.llm_temperature,
-        )
+        return await self._chat_llm.chat(messages)
 
     def _chat_without_model(self, status_context: dict[str, Any]) -> str:
         snap = status_context.get("snapshot") or {}

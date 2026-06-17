@@ -26,6 +26,7 @@ from modules.rag.schemas import (
     RetrievalMeta,
 )
 from modules.rag.storage import DocumentStore
+from shared.llm import get_model_registry
 
 logger = logging.getLogger(__name__)
 
@@ -441,6 +442,10 @@ class RagService:
                     )
                 )
 
+        split_cfg = get_model_registry().resolve("rag.split")
+        embed_cfg = get_model_registry().resolve("rag.embed")
+        summarize_cfg = get_model_registry().resolve("rag.summarize")
+
         return RagStatusResponse(
             default_collection=rag_settings.default_collection,
             collections=collections,
@@ -451,10 +456,11 @@ class RagService:
                 "chunk_size": rag_settings.chunk_size,
                 "chunk_overlap": rag_settings.chunk_overlap,
                 "split_mode": rag_settings.split_mode,
-                "split_model": rag_settings.split_model,
+                "split_model": split_cfg.model,
                 "min_chunk_size": rag_settings.min_chunk_size,
                 "embed_breakpoint_threshold": rag_settings.embed_breakpoint_threshold,
                 "embed_breakpoint_percentile": rag_settings.embed_breakpoint_percentile,
-                "embed_model": rag_settings.embed_model,
+                "embed_model": embed_cfg.model,
+                "summarize_model": summarize_cfg.model,
             },
         )

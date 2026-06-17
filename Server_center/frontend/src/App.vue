@@ -6,6 +6,7 @@ import AgentSidebar from './components/AgentSidebar.vue'
 import ChatHeader from './components/ChatHeader.vue'
 import ChatInput from './components/ChatInput.vue'
 import EnvWorkspace from './components/EnvWorkspace.vue'
+import LlmConfigWorkspace from './components/LlmConfigWorkspace.vue'
 import RagWorkspace from './components/RagWorkspace.vue'
 import MessageList from './components/MessageList.vue'
 import {
@@ -274,6 +275,15 @@ onUnmounted(() => {
         @send="onSend"
         @ingested="onIngested"
         @responded="onResponded"
+        @error="onWorkspaceError"
+      />
+
+      <LlmConfigWorkspace
+        v-else-if="selectedAgentId === 'llm'"
+        :messages="allMessages"
+        :loading="loading"
+        :agent="selectedAgent"
+        :live="wsConnected"
         @error="onWorkspaceError"
       />
 
