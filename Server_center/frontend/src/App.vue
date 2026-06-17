@@ -6,6 +6,7 @@ import AgentSidebar from './components/AgentSidebar.vue'
 import ChatHeader from './components/ChatHeader.vue'
 import ChatInput from './components/ChatInput.vue'
 import EnvWorkspace from './components/EnvWorkspace.vue'
+import RagWorkspace from './components/RagWorkspace.vue'
 import MessageList from './components/MessageList.vue'
 import {
   agentMood,
@@ -175,6 +176,14 @@ function onResponded(msg) {
   upsertMessage(msg)
 }
 
+function onIngested(msg) {
+  upsertMessage(msg)
+}
+
+function onWorkspaceError(msg) {
+  error.value = msg
+}
+
 watch(selectedAgentId, (id) => {
   if (mobileView.value === 'chat') markAgentRead(id)
 })
@@ -255,6 +264,17 @@ onUnmounted(() => {
         @screenshot="requestScreenshot"
         @camera="requestCamera"
         @responded="onResponded"
+      />
+
+      <RagWorkspace
+        v-else-if="selectedAgentId === 'rag'"
+        :messages="allMessages"
+        :loading="loading"
+        :agent="selectedAgent"
+        @send="onSend"
+        @ingested="onIngested"
+        @responded="onResponded"
+        @error="onWorkspaceError"
       />
 
       <template v-else>

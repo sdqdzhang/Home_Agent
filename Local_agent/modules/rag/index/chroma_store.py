@@ -87,3 +87,70 @@ class ChromaStore:
 
     def list_collection_names(self) -> list[str]:
         return [col.name for col in self._client.list_collections()]
+
+    def delete_by_ids(self, collection_id: str, chunk_ids: list[str]) -> int:
+        """① 按主键 ID 删除向量。"""
+        if not chunk_ids:
+            return 0
+        collection = self.get_or_create_collection(collection_id)
+        collection.delete(ids=chunk_ids)
+        return len(chunk_ids)
+
+    def delete_by_metadata(self, collection_id: str, where: dict[str, Any]) -> int:
+        """② 按元数据过滤删除（如 doc_id）。"""
+        collection = self.get_or_create_collection(collection_id)
+        if collection.count() == 0:
+            return 0
+        # 先查出匹配的 id，便于返回删除数量
+        matched = collection.get(where=where, include=[])
+        ids = matched.get("ids") or []
+        if not ids:
+            return 0
+        collection.delete(where=where)
+        return len(ids)
+
+    def drop_collection(self, collection_id: str) -> bool:
+        """③ 删除整个 collection（物理抹除 HNSW 索引）。"""
+        name = self._collection_name(collection_id)
+        existing = {col.name for col in self._client.list_collections()}
+        if name not in existing:
+            return False
+        self._client.delete_collection(name)
+        return True
+
+    def collection_exists(self, collection_id: str) -> bool:
+        name = self._collection_name(collection_id)
+        return name in {col.name for col in self._client.list_collections()}
+
+    def get_chunks_by_ids(self, collection_id: str, chunk_ids: list[str]) -> list[dict[str, Any]]:
+        """按 chunk_id 批量读取向量库中的原文与 metadata。"""
+        if not chunk_ids:
+            return []
+        collection = self.get_or_create_collection(collection_id)
+        if collection.count() == 0:
+            return []
+        try:
+            data = collection.get(ids=chunk_ids, include=["documents", "metadatas"])
+        except Exception:
+            return []
+
+        items: list[dict[str, Any]] = []
+        ids = data.get("ids") or []
+        docs = data.get("documents") or []
+        metas = data.get("metadatas") or []
+        for i, chunk_id in enumerate(ids):
+            meta = metas[i] if i < len(metas) else {}
+            text = docs[i] if i < len(docs) else ""
+            chunk_index = meta.get("chunk_index")
+            items.append(
+                {
+                    "chunk_id": chunk_id,
+                    "text": text,
+                    "preview": (text[:120] + "…") if len(text) > 120 else text,
+                    "char_count": len(text),
+                    "metadata": meta or {},
+                    "chunk_index": int(chunk_index) if chunk_index is not None else None,
+                }
+            )
+        items.sort(key=lambda row: (row["chunk_index"] if row["chunk_index"] is not None else 9999, row["chunk_id"]))
+        return items

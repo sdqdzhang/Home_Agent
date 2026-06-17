@@ -4,6 +4,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+SplitMode = Literal["rule", "semantic", "semantic_embedding", "structural"]
+
 
 class SourceItem(BaseModel):
     doc_id: str
@@ -61,6 +63,11 @@ class RagIngestFileRequest(BaseModel):
     path: str
     collection_id: str | None = None
     title: str = ""
+    split_mode: SplitMode | None = None
+    use_model_split: bool | None = Field(
+        default=None,
+        description="True=semantic 语义分块；False=rule 规则分块；省略则用 .env LA_RAG_SPLIT_MODE",
+    )
 
 
 class RagIngestTextRequest(BaseModel):
@@ -68,6 +75,8 @@ class RagIngestTextRequest(BaseModel):
     collection_id: str | None = None
     title: str = "inline_text"
     source_ref: str = ""
+    split_mode: SplitMode | None = None
+    use_model_split: bool | None = None
 
 
 class RagIngestResponse(BaseModel):
@@ -76,6 +85,7 @@ class RagIngestResponse(BaseModel):
     title: str
     chunk_count: int
     char_count: int
+    split_mode: SplitMode = "rule"
 
 
 class RagCollectionInfo(BaseModel):
@@ -88,3 +98,24 @@ class RagStatusResponse(BaseModel):
     default_collection: str
     collections: list[RagCollectionInfo]
     settings: dict[str, Any]
+
+
+class RagDeleteChunksRequest(BaseModel):
+    collection_id: str | None = None
+    chunk_ids: list[str] = Field(min_length=1)
+
+
+class RagDeleteDocumentRequest(BaseModel):
+    doc_id: str
+    collection_id: str | None = None
+
+
+class RagDeleteCollectionRequest(BaseModel):
+    collection_id: str
+
+
+class RagDeleteResponse(BaseModel):
+    deleted: int
+    mode: Literal["by_ids", "by_doc_id", "drop_collection"]
+    collection_id: str
+    detail: str = ""

@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -21,6 +22,15 @@ class RagSettings(BaseSettings):
 
     chunk_size: int = 800
     chunk_overlap: int = 120
+
+    # 分块：rule | semantic | semantic_embedding | structural
+    split_mode: Literal["rule", "semantic", "semantic_embedding", "structural"] = "rule"
+    split_model: str = "qwen2.5:3b"
+
+    # 策略③ 向量断点
+    min_chunk_size: int = 50
+    embed_breakpoint_threshold: float = 0.35
+    embed_breakpoint_percentile: float = 75.0
 
     top_k: int = 5
     min_score: float = 0.25

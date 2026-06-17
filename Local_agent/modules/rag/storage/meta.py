@@ -104,3 +104,43 @@ class DocumentStore:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
         return dict(row) if row else None
+
+    def list_documents(self, collection_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            if collection_id:
+                rows = conn.execute(
+                    "SELECT * FROM documents WHERE collection_id = ? ORDER BY created_at DESC LIMIT ?",
+                    (collection_id, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM documents ORDER BY created_at DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_chunk_ids_by_doc(self, doc_id: str) -> list[str]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT id FROM chunks WHERE doc_id = ? ORDER BY chunk_index", (doc_id,)).fetchall()
+        return [row["id"] for row in rows]
+
+    def delete_chunks_by_ids(self, chunk_ids: list[str]) -> int:
+        if not chunk_ids:
+            return 0
+        placeholders = ",".join("?" * len(chunk_ids))
+        with self._connect() as conn:
+            cur = conn.execute(f"DELETE FROM chunks WHERE id IN ({placeholders})", chunk_ids)
+            return cur.rowcount
+
+    def delete_document(self, doc_id: str) -> bool:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM chunks WHERE doc_id = ?", (doc_id,))
+            cur = conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
+            return cur.rowcount > 0
+
+    def delete_collection_records(self, collection_id: str) -> int:
+        """删除 SQLite 中某 collection 的全部文档与 chunk 记录。"""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM chunks WHERE collection_id = ?", (collection_id,))
+            cur = conn.execute("DELETE FROM documents WHERE collection_id = ?", (collection_id,))
+            return cur.rowcount

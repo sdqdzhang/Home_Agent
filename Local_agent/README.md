@@ -165,6 +165,8 @@ curl -X POST http://127.0.0.1:8770/crawler/chat \
 | `LA_ENV_PING_TARGET` | `8.8.8.8` | Ping 目标 |
 | `LA_RAG_TOP_K` | `5` | RAG 默认召回 K |
 | `LA_RAG_MIN_SCORE` | `0.25` | RAG 最低相似度 |
+| `LA_RAG_SPLIT_MODE` | `rule` | 分块：`rule` / `semantic` / `semantic_embedding` / `structural` |
+| `LA_RAG_SPLIT_MODEL` | `qwen2.5:3b` | 语义分块裁判模型 |
 | `LA_RAG_SUMMARIZE` | `true` | 是否由本地模型总结 |
 
 ## 数据位置

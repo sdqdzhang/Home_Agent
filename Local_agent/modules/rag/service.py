@@ -11,13 +11,14 @@ from modules.rag import DEFAULT_MSG_TYPE, MODULE_ALIASES
 from modules.rag.chat.memory import ConversationMemory
 from modules.rag.config import rag_settings
 from modules.rag.index.chroma_store import ChromaStore
-from modules.rag.ingest.chunker import chunk_text
+from modules.rag.ingest.splitter import split_document
 from modules.rag.ingest.loader import load_file_text
 from modules.rag.model.assistant import RagAssistant
 from modules.rag.retrieval.retriever import RagRetriever
 from modules.rag.schemas import (
     RagChatResponse,
     RagCollectionInfo,
+    RagDeleteResponse,
     RagIngestResponse,
     RagQueryRequest,
     RagQueryResponse,
@@ -61,7 +62,13 @@ class RagService:
 
         if action == "ingest_file":
             path = payload.get("path") or message.get("text", "")
-            await self.ingest_file(path, collection_id=payload.get("collection_id"), title=payload.get("title", ""))
+            await self.ingest_file(
+                path,
+                collection_id=payload.get("collection_id"),
+                title=payload.get("title", ""),
+                split_mode=payload.get("split_mode"),
+                use_model_split=payload.get("use_model_split"),
+            )
             return
 
         if action == "ingest_text":
@@ -71,6 +78,8 @@ class RagService:
                 collection_id=payload.get("collection_id"),
                 title=payload.get("title", "inline_text"),
                 source_ref=payload.get("source_ref", ""),
+                split_mode=payload.get("split_mode"),
+                use_model_split=payload.get("use_model_split"),
             )
             return
 
@@ -95,6 +104,8 @@ class RagService:
         *,
         collection_id: str | None = None,
         title: str = "",
+        split_mode: str | None = None,
+        use_model_split: bool | None = None,
     ) -> RagIngestResponse:
         collection = collection_id or rag_settings.default_collection
         content, detected_title = load_file_text(path)
@@ -105,6 +116,8 @@ class RagService:
             title=final_title,
             source_type="file",
             source_ref=str(Path(path).expanduser().resolve()),
+            split_mode=split_mode,
+            use_model_split=use_model_split,
         )
 
     async def ingest_text(
@@ -114,6 +127,8 @@ class RagService:
         collection_id: str | None = None,
         title: str = "inline_text",
         source_ref: str = "",
+        split_mode: str | None = None,
+        use_model_split: bool | None = None,
     ) -> RagIngestResponse:
         collection = collection_id or rag_settings.default_collection
         final_title = title
@@ -125,6 +140,8 @@ class RagService:
             title=final_title,
             source_type="text",
             source_ref=source_ref or final_title,
+            split_mode=split_mode,
+            use_model_split=use_model_split,
         )
 
     async def _ingest_content(
@@ -135,13 +152,18 @@ class RagService:
         title: str,
         source_type: str,
         source_ref: str,
+        split_mode: str | None = None,
+        use_model_split: bool | None = None,
     ) -> RagIngestResponse:
-        chunks = chunk_text(
+        pieces, mode_used = await split_document(
             content,
+            split_mode=split_mode,  # type: ignore[arg-type]
+            use_model=use_model_split,
             chunk_size=rag_settings.chunk_size,
             chunk_overlap=rag_settings.chunk_overlap,
+            source_ref=source_ref,
         )
-        if not chunks:
+        if not pieces:
             raise ValueError("文档内容为空，无法入库")
 
         doc_id = self.meta.create_document(
@@ -150,27 +172,35 @@ class RagService:
             source_type=source_type,
             source_ref=source_ref,
             char_count=len(content),
-            chunk_count=len(chunks),
+            chunk_count=len(pieces),
         )
 
-        metadatas = [
-            {
+        chunk_texts: list[str] = []
+        metadatas: list[dict[str, Any]] = []
+        for index, piece in enumerate(pieces):
+            chunk_texts.append(piece.text)
+            meta: dict[str, Any] = {
                 "doc_id": doc_id,
                 "title": title,
                 "url": source_ref,
                 "chunk_index": index,
+                "split_mode": mode_used,
             }
-            for index in range(len(chunks))
-        ]
-        chunk_ids = self.store.add_chunks(collection_id, doc_id=doc_id, chunks=chunks, metadatas=metadatas)
+            for key, value in piece.metadata.items():
+                if value is not None and value != "":
+                    meta[key] = value if isinstance(value, (str, int, float, bool)) else str(value)
+            metadatas.append(meta)
+
+        chunk_ids = self.store.add_chunks(collection_id, doc_id=doc_id, chunks=chunk_texts, metadatas=metadatas)
         self.meta.add_chunks(doc_id, collection_id, chunk_ids)
 
         response = RagIngestResponse(
             doc_id=doc_id,
             collection_id=collection_id,
             title=title,
-            chunk_count=len(chunks),
+            chunk_count=len(pieces),
             char_count=len(content),
+            split_mode=mode_used,
         )
 
         if self.server:
@@ -182,7 +212,8 @@ class RagService:
                     "log": [
                         f"collection={collection_id}",
                         f"doc_id={doc_id}",
-                        f"chunks={len(chunks)}",
+                        f"chunks={len(pieces)}",
+                        f"split_mode={mode_used}",
                     ],
                     "payload": response.model_dump(),
                 },
@@ -316,6 +347,80 @@ class RagService:
             },
         )
 
+    def delete_chunks(
+        self,
+        chunk_ids: list[str],
+        *,
+        collection_id: str | None = None,
+    ) -> RagDeleteResponse:
+        """① 按 chunk_id 删除向量与 SQLite 记录。"""
+        coll = collection_id or rag_settings.default_collection
+        deleted = self.store.delete_by_ids(coll, chunk_ids)
+        self.meta.delete_chunks_by_ids(chunk_ids)
+        return RagDeleteResponse(
+            deleted=deleted,
+            mode="by_ids",
+            collection_id=coll,
+            detail=f"removed {deleted} chunk(s)",
+        )
+
+    def delete_document(
+        self,
+        doc_id: str,
+        *,
+        collection_id: str | None = None,
+    ) -> RagDeleteResponse:
+        """② 按 doc_id 元数据过滤删除该文档全部分块。"""
+        doc = self.meta.get_document(doc_id)
+        if not doc:
+            raise ValueError(f"文档不存在: {doc_id}")
+
+        coll = collection_id or doc["collection_id"]
+        deleted = self.store.delete_by_metadata(coll, {"doc_id": doc_id})
+        self.meta.delete_document(doc_id)
+        return RagDeleteResponse(
+            deleted=deleted,
+            mode="by_doc_id",
+            collection_id=coll,
+            detail=f"removed document {doc_id} ({deleted} chunk(s))",
+        )
+
+    def drop_collection(self, collection_id: str) -> RagDeleteResponse:
+        """③ 删除整个 collection（Chroma + SQLite 元数据）。"""
+        coll = collection_id or rag_settings.default_collection
+        dropped = self.store.drop_collection(coll)
+        docs_removed = self.meta.delete_collection_records(coll)
+        return RagDeleteResponse(
+            deleted=docs_removed,
+            mode="drop_collection",
+            collection_id=coll,
+            detail="collection dropped" if dropped else "collection not found in chroma; sqlite records cleared",
+        )
+
+    def list_documents(self, collection_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        return self.meta.list_documents(collection_id, limit=limit)
+
+    def inspect_collection(self, collection_id: str | None = None) -> dict[str, Any]:
+        """供调试/GUI 浏览：SQLite 文档树 + Chroma 片段预览。"""
+        coll = collection_id or rag_settings.default_collection
+        docs = self.meta.list_documents(coll, limit=200)
+        chroma_count = self.store.count_chunks(coll)
+
+        documents: list[dict[str, Any]] = []
+        for doc in docs:
+            chunk_ids = self.meta.list_chunk_ids_by_doc(doc["id"])
+            chunks = self.store.get_chunks_by_ids(coll, chunk_ids)
+            documents.append({**doc, "chunks": chunks})
+
+        sqlite_chunks = sum(int(d.get("chunk_count") or 0) for d in docs)
+        return {
+            "collection_id": coll,
+            "chroma_chunk_count": chroma_count,
+            "sqlite_document_count": len(docs),
+            "sqlite_chunk_count": sqlite_chunks,
+            "documents": documents,
+        }
+
     def status(self) -> RagStatusResponse:
         collections = [
             RagCollectionInfo(
@@ -345,6 +450,11 @@ class RagService:
                 "summarize": rag_settings.summarize,
                 "chunk_size": rag_settings.chunk_size,
                 "chunk_overlap": rag_settings.chunk_overlap,
+                "split_mode": rag_settings.split_mode,
+                "split_model": rag_settings.split_model,
+                "min_chunk_size": rag_settings.min_chunk_size,
+                "embed_breakpoint_threshold": rag_settings.embed_breakpoint_threshold,
+                "embed_breakpoint_percentile": rag_settings.embed_breakpoint_percentile,
                 "embed_model": rag_settings.embed_model,
             },
         )

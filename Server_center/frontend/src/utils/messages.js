@@ -113,6 +113,33 @@ export function envChatMessages(messages, agent) {
   )
 }
 
+/** RAG 对话区：用户提问 + rag_result 回答（不含入库 execution_log） */
+/** @param {UiMessage[]} messages @param {{ id: string, names: string[] }} agent */
+export function ragChatMessages(messages, agent) {
+  return messages.filter(
+    (m) =>
+      belongsToAgent(m, agent) &&
+      (m.msg_type === 'text' || m.msg_type === 'rag_result') &&
+      !isRagIngestRequest(m),
+  )
+}
+
+/** RAG 入库日志（execution_log，按时间倒序） */
+/** @param {UiMessage[]} messages @param {{ id: string, names: string[] }} agent @param {number} limit */
+export function ragIngestLogs(messages, agent, limit = 30) {
+  return messages
+    .filter((m) => belongsToAgent(m, agent) && m.msg_type === 'execution_log')
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, limit)
+}
+
+/** 是否为用户发起的 RAG 入库请求（用于从对话区隐藏） */
+/** @param {UiMessage} msg */
+export function isRagIngestRequest(msg) {
+  const action = msg.message?.payload?.action
+  return action === 'ingest_text' || action === 'ingest_file'
+}
+
 /** 从消息流提取环境仪表盘最新快照与 LLM 总结 */
 /** @param {UiMessage[]} messages @param {{ id: string, names: string[] }} agent */
 export function extractEnvDashboard(messages, agent) {
@@ -198,6 +225,32 @@ export function buildCameraRequest(targetAgentId) {
       text: '请求摄像头拍照',
       role: 'user',
       payload: { action: 'camera' },
+    },
+    timestamp: Math.floor(Date.now() / 1000),
+  }
+}
+
+/** RAG 入库：文本内容（浏览器读文件后同样走此接口） */
+/** @param {string} targetAgentId @param {{ text: string, title?: string, collection_id?: string, split_mode?: string }} opts */
+export function buildRagIngestTextMessage(targetAgentId, opts) {
+  const agent = findAgentByName(targetAgentId)
+  const target = agent?.names[0] || targetAgentId
+  const title = opts.title || 'web_upload'
+  return {
+    id: makeUserMessageId(),
+    name: USER_SENDER,
+    target,
+    msg_type: 'text',
+    message: {
+      text: `入库文本: ${title}（${opts.text.length} 字）`,
+      role: 'user',
+      payload: {
+        action: 'ingest_text',
+        text: opts.text,
+        title,
+        collection_id: opts.collection_id || 'default',
+        split_mode: opts.split_mode || 'rule',
+      },
     },
     timestamp: Math.floor(Date.now() / 1000),
   }

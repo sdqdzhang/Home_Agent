@@ -8,71 +8,72 @@
 |------|------|------|
 | `DEFAULT_COLLECTION` | `default` | 默认知识库 |
 | `EMBED_MODEL` | `nomic-embed-text` | Ollama 嵌入模型 |
-| `EMBED_BASE_URL` | `http://127.0.0.1:11434/v1` | 嵌入 API |
-| `CHUNK_SIZE` | `800` | 分块大小（字符） |
-| `CHUNK_OVERLAP` | `120` | 分块重叠 |
-| `TOP_K` | `5` | 默认召回数 K |
-| `MIN_SCORE` | `0.25` | 最低相似度（cosine） |
-| `SUMMARIZE` | `true` | `true`=模型总结；`false`=直接返回片段 |
+| `CHUNK_SIZE` | `800` | 分块上限（字符） |
+| `CHUNK_OVERLAP` | `120` | 硬切/递归切重叠 |
+| `SPLIT_MODE` | `rule` | 见下表四种模式 |
+| `SPLIT_MODEL` | `qwen2.5:3b` | 策略② 3B 裁判模型 |
+| `MIN_CHUNK_SIZE` | `50` | 策略③ 小块合并下限 |
+| `EMBED_BREAKPOINT_THRESHOLD` | `0.35` | 策略③ 相邻句向量余弦距离阈值 |
+| `EMBED_BREAKPOINT_PERCENTILE` | `75` | 策略③ 距离百分位兜底（取 max(阈值, P75)） |
+| `TOP_K` / `MIN_SCORE` / `SUMMARIZE` | — | 检索与问答 |
+
+## 四种分块策略
+
+入库时 `split_mode` 取值：`rule` | `semantic` | `semantic_embedding` | `structural`  
+（`use_model_split=true` 等价于 `semantic`，`false` 等价于 `rule`）
+
+| 维度 | ① `rule` | ② `semantic` | ③ `semantic_embedding` | ④ `structural` ⭐ |
+|------|----------|----------------|------------------------|-------------------|
+| **原理** | 段落/标题贪婪合并至 ~800 字 | 3B 模型 YES/NO 判主题切换 | 句子 Embedding 余弦距离找断点 | Markdown 标题树 + 标题路径 metadata |
+| **依据** | 换行、字数 | 模型推理 | 向量数学距离 | `#` ~ `######` 结构 |
+| **速度** | 毫秒级 | 秒~分钟 | 秒级（批量 embed 句子） | 毫秒级 |
+| **硬件** | 无 | 3B 显存 | 嵌入模型（与入库共用 nomic） | 无 |
+| **metadata** | 基础 | 基础 | 基础 | `Header_1`…、`source_ref` |
+| **推荐场景** | 快速入库 | 长文语义原子 | 无 LLM 的语义切分 | `.md` / 教程文档 |
+
+### 实现文件
+
+| 策略 | 文件 |
+|------|------|
+| 调度 | `ingest/splitter.py` → `split_document()` |
+| ① | `ingest/splitter_rule.py` |
+| ② | `ingest/splitter_semantic.py` + `model/split_judge.py` |
+| ③ | `ingest/splitter_semantic_embedding.py` |
+| ④ | `ingest/splitter_structural.py` + `ingest/structure.py` + `ingest/recursive_split.py` |
+| 共用 | `ingest/units.py`（句/段/标题）、`ingest/chunker.py`（硬切） |
+
+**策略③说明：** 分块阶段对**句子**做 Embedding 找断点；入库时 Chroma 仍会对**最终 chunk 全文**再 Embed 一次。句子向量仅用于切分，不与 Chroma 向量复用（避免架构耦合）。
+
+**策略④说明：** 章节超长时按 `\n\n` → `\n` → 空格递归细分；正文前注入 `[Header_1 > Header_2]` 面包屑，metadata 写入 `Header_1`、`Header_2`…
 
 ## 本地 API
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/rag/status` | 知识库统计与当前配置 |
-| POST | `/rag/ingest/file` | 手动导入文件 |
-| POST | `/rag/ingest/text` | 手动导入纯文本 |
-| POST | `/rag/query` | 单次检索问答 |
-| POST | `/rag/chat` | 带会话记忆的问答 |
+| POST | `/rag/ingest/file` | 手动导入（支持 `split_mode`） |
+| POST | `/rag/ingest/text` | 手动导入文本 |
+| GET | `/rag/status` | 含分块配置 |
+| … | 见上文删除/问答 API | |
 
-### 问答请求示例
+### 入库示例
 
 ```bash
-curl -X POST http://127.0.0.1:8770/rag/query \
+# ④ 结构分块（Markdown 推荐）
+curl -X POST http://127.0.0.1:8770/rag/ingest/file \
   -H "Content-Type: application/json" \
-  -d '{"query":"文档主题是什么？","top_k":5,"min_score":0.25,"summarize":true}'
+  -d '{"path":"README.md","split_mode":"structural"}'
+
+# ③ 向量断点
+curl -X POST http://127.0.0.1:8770/rag/ingest/text \
+  -H "Content-Type: application/json" \
+  -d '{"text":"……","split_mode":"semantic_embedding"}'
+
+# ① 规则（默认）
+curl -X POST http://127.0.0.1:8770/rag/ingest/text \
+  -d '{"text":"……","split_mode":"rule"}'
 ```
 
-`top_k`、`min_score`、`summarize` 均可省略，使用 `.env` 默认值；请求级参数覆盖默认。
-
-## Server Center 消息
-
-- 模块名：`RAG模块` / `rag`
-- 用户提问：`msg_type=text`，`target=RAG模块`
-- 模块回复：`msg_type=rag_result`
-- 入库进度：`msg_type=execution_log`
-
-### `rag_result`
-
-```json
-{
-  "query": "…",
-  "answer": "…",
-  "sources": [
-    { "title": "README.md", "url": "…", "score": 0.87, "snippet": "…", "doc_id": "doc_abc", "chunk_id": "…", "chunk_index": 0 }
-  ],
-  "collection_id": "default",
-  "session_id": "default",
-  "mode": "summarized",
-  "retrieval_meta": {
-    "collection_id": "default",
-    "top_k": 5,
-    "min_score": 0.25,
-    "chunks_retrieved": 3,
-    "chunks_used": 3,
-    "summarize": true,
-    "latency_ms": 420
-  }
-}
-```
-
-`mode`：`summarized`（模型总结）或 `direct`（直接返回片段）。
-
-## 数据目录
-
-- `data/rag/chroma/` — Chroma 持久化
-- `data/rag/rag.db` — 文档元数据与会话
-- `data/rag/documents/` — 预留
+响应与 chunk metadata 均含 `split_mode`；结构分块另有 `Header_1`、`Header_2` 等。
 
 ## 测试
 
@@ -80,4 +81,16 @@ curl -X POST http://127.0.0.1:8770/rag/query \
 python test/test_rag_gui.py
 ```
 
-需 Ollama 已拉取 `nomic-embed-text`；勾选「模型总结」时还需对话模型（如 `llama3.2`）。
+测试窗口下拉框可选四种分块；「向量库」页可查看 `split_mode` 与标题路径。
+
+| 分块 | 额外依赖 |
+|------|----------|
+| ① rule | — |
+| ② semantic | `ollama pull qwen2.5:3b` |
+| ③ semantic_embedding | `nomic-embed-text` |
+| ④ structural | 无（Markdown 效果更佳） |
+
+## 数据目录
+
+- `data/rag/chroma/` — 向量
+- `data/rag/rag.db` — 元数据

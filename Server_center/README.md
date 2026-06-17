@@ -484,6 +484,36 @@ ws://your-server:8765/ws/{target}
 }
 ```
 
+### RAG 模块 Web UI（`RagWorkspace.vue`）
+
+左侧 **对话检索**，右侧 **知识库入库**（50/50 布局）：
+
+| 区域 | 功能 |
+|------|------|
+| 左 | 提问 + `rag_result` 回答展示 |
+| 右 | 粘贴文本 / 上传文件入库、Collection、四种分块方式、入库 execution_log 记录 |
+
+入库消息格式（`POST /api/v1/messages/local`，`target=RAG模块`）：
+
+```json
+{
+  "msg_type": "text",
+  "message": {
+    "text": "入库文本: README.md（1234 字）",
+    "role": "user",
+    "payload": {
+      "action": "ingest_text",
+      "text": "……全文……",
+      "title": "README.md",
+      "collection_id": "default",
+      "split_mode": "structural"
+    }
+  }
+}
+```
+
+浏览器端读取文件后以 `ingest_text` 发送（非服务器路径）。需 Local Agent RAG 模块在线并监听 WebSocket。
+
 **reflection_note**
 ```json
 {

@@ -6,6 +6,9 @@ from fastapi import APIRouter, HTTPException
 
 from modules.rag.schemas import (
     RagChatRequest,
+    RagDeleteChunksRequest,
+    RagDeleteCollectionRequest,
+    RagDeleteDocumentRequest,
     RagIngestFileRequest,
     RagIngestTextRequest,
     RagQueryRequest,
@@ -48,7 +51,13 @@ async def rag_chat(req: RagChatRequest) -> dict[str, Any]:
 @router.post("/ingest/file")
 async def rag_ingest_file(req: RagIngestFileRequest) -> dict[str, Any]:
     try:
-        result = await _get_service().ingest_file(req.path, collection_id=req.collection_id, title=req.title)
+        result = await _get_service().ingest_file(
+            req.path,
+            collection_id=req.collection_id,
+            title=req.title,
+            split_mode=req.split_mode,
+            use_model_split=req.use_model_split,
+        )
     except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
     return result.model_dump()
@@ -62,7 +71,37 @@ async def rag_ingest_text(req: RagIngestTextRequest) -> dict[str, Any]:
             collection_id=req.collection_id,
             title=req.title,
             source_ref=req.source_ref,
+            split_mode=req.split_mode,
+            use_model_split=req.use_model_split,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return result.model_dump()
+
+
+@router.get("/documents")
+def rag_list_documents(collection_id: str | None = None, limit: int = 100) -> dict[str, Any]:
+    return {"documents": _get_service().list_documents(collection_id, limit=limit)}
+
+
+@router.post("/delete/chunks")
+def rag_delete_chunks(req: RagDeleteChunksRequest) -> dict[str, Any]:
+    try:
+        return _get_service().delete_chunks(req.chunk_ids, collection_id=req.collection_id).model_dump()
+    except Exception as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/delete/document")
+def rag_delete_document(req: RagDeleteDocumentRequest) -> dict[str, Any]:
+    try:
+        return _get_service().delete_document(req.doc_id, collection_id=req.collection_id).model_dump()
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@router.post("/delete/collection")
+def rag_delete_collection(req: RagDeleteCollectionRequest) -> dict[str, Any]:
+    if not req.collection_id.strip():
+        raise HTTPException(400, "collection_id required")
+    return _get_service().drop_collection(req.collection_id).model_dump()

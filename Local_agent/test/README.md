@@ -18,7 +18,7 @@ pip install -r requirements.txt
 | `test_llm_gui.py` | 测试 `shared/llm` OpenAI 兼容调用 | Ollama 运行中 |
 | `test_crawler_gui.py` | 测试爬取（可切换是否使用模型） | 无模型模式仅需网络 |
 | `test_env_gui.py` | 测试环境感知（含 Server 地址、测试连接、推送） | 推送需 Server Center 运行 |
-| `test_rag_gui.py` | 测试 RAG 入库与问答（K 值、模型总结开关） | 嵌入需 `nomic-embed-text` |
+| `test_rag_gui.py` | RAG 入库（规则/语义分块）、问答、向量库浏览与删除 | 语义分块需 `qwen2.5:3b` |
 
 ### 启动
 
@@ -52,6 +52,19 @@ Windows 也可双击：
 1. 先跑 **不使用模型** + `https://example.com`（无需 Ollama）
 2. 再勾选 **使用模型** 对比结果与日志
 3. 用 LLM 测试窗口确认 Ollama 连通后再测模型爬取
+
+## RAG：四种分块策略
+
+| split_mode | 名称 | 速度 | 依赖 |
+|------------|------|------|------|
+| `rule` | ① 规则贪婪合并 | 毫秒 | 无 |
+| `semantic` | ② 3B 语义裁判 | 慢 | `qwen2.5:3b` |
+| `semantic_embedding` | ③ 向量断点 | 中 | `nomic-embed-text` |
+| `structural` | ④ 文档结构（推荐 .md） | 毫秒 | 无 |
+
+测试窗口「入库与问答」→ 下拉选择分块 → 入库后在「向量库」查看块数、`split_mode`、`Header_*`。
+
+建议对比：同一篇 Markdown 分别用 ① 与 ④ 入库，观察块边界与 metadata 差异。
 
 ## 常见失败原因
 
