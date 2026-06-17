@@ -34,13 +34,14 @@ class CrawlerAssistant:
             strategy=result.strategy,
             title=result.title,
             error=result.error,
-            preview=result.preview(1500),
+            preview=result.preview(800),
         )
         return await self.llm.chat_json(
             [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
-            ]
+            ],
+            max_tokens=384,
         )
 
     async def tune_config(
@@ -63,7 +64,8 @@ class CrawlerAssistant:
             [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
-            ]
+            ],
+            max_tokens=384,
         )
         return {**config, **tuned}
 
@@ -83,7 +85,8 @@ class CrawlerAssistant:
             [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
-            ]
+            ],
+            max_tokens=256,
         )
 
     async def custom_filter(
@@ -103,7 +106,8 @@ class CrawlerAssistant:
             [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
-            ]
+            ],
+            max_tokens=2048,
         )
 
     async def chat(self, user_message: str, history: list[dict[str, str]], context: str = "") -> str:

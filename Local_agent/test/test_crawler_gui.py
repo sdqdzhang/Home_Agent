@@ -91,6 +91,11 @@ class CrawlerTestApp(tk.Tk):
         self._log(f"    任务: {task}")
         if ignore_ssl:
             self._log("    已启用: 忽略 SSL 证书错误")
+        if use_model:
+            self._log("    提示: 使用模型时 LLM 每次调用约 30-90 秒，下方会实时输出进度")
+
+        def _on_log_line(line: str) -> None:
+            self.after(0, lambda l=line: self._log(f"    | {l}"))
 
         async def _coro():
             from modules.crawler.config import crawler_settings
@@ -102,7 +107,13 @@ class CrawlerTestApp(tk.Tk):
             store = JobStore(crawler_settings.db_path, crawler_settings.artifacts_dir)
             orch = CrawlOrchestrator(store, CrawlerAssistant())
             config = {"verify_ssl": not ignore_ssl}
-            return await orch.run(url, task=task, config=config, use_model=use_model)
+            return await orch.run(
+                url,
+                task=task,
+                config=config,
+                use_model=use_model,
+                log_callback=_on_log_line,
+            )
 
         run_async(_coro, self._on_ok, self._on_err)
 

@@ -15,7 +15,8 @@ Local_agent/
 │   └── server_center/      # Server Center RSA 分块加密 + 消息发送（各模块复用）
 ├── modules/
 │   ├── crawler/            # 网页爬取模块
-│   └── env/                # 环境感知模块（高频采集 / 低频汇报）
+│   ├── env/                # 环境感知模块（高频采集 / 低频汇报）
+│   └── rag/                # RAG 检索增强（Chroma + 手动入库）
 │       ├── collectors/     # 系统指标采集
 │       ├── model/          # LLM 运营总结
 │       ├── aggregator.py   # 10 分钟窗口统计压缩
@@ -33,6 +34,7 @@ Local_agent/
 python test/test_llm_gui.py      # LLM 调用
 python test/test_crawler_gui.py  # 爬取（可勾选是否使用模型）
 python test/test_env_gui.py      # 环境感知（可勾选是否使用模型）
+python test/test_rag_gui.py      # RAG 入库与问答
 ```
 
 ## 快速启动
@@ -80,6 +82,11 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8770
 | POST | `/env/collect` | 手动触发一次采集 |
 | POST | `/env/summary` | 手动触发 10 分钟窗口压缩与总结 |
 | POST | `/env/screenshot` | 按需桌面截图 |
+| GET | `/rag/status` | RAG 知识库状态 |
+| POST | `/rag/ingest/file` | 手动导入文件到向量库 |
+| POST | `/rag/ingest/text` | 手动导入文本 |
+| POST | `/rag/query` | 检索问答（可指定 K、summarize） |
+| POST | `/rag/chat` | 带会话的 RAG 对话 |
 
 ### 主 Agent 读取环境状态
 
@@ -122,6 +129,14 @@ curl -X POST http://127.0.0.1:8770/crawler/chat \
 
 详见 [环境感知消息格式](modules/env/README.md)。
 
+### RAG
+
+- 模块名：`RAG模块` / `rag`
+- 上报类型：`rag_result`（问答）、`execution_log`（入库）
+- Web UI 左侧选「RAG 模块」可直接对话；`summarize` 控制模型总结或直接返回片段
+
+详见 [RAG 模块文档](modules/rag/README.md)。
+
 ### 测试推送到 Server Center
 
 1. 启动 Server Center：`uvicorn app.main:app --port 8765`
@@ -148,9 +163,15 @@ curl -X POST http://127.0.0.1:8770/crawler/chat \
 | `LA_ENV_COLLECT_INTERVAL_SECONDS` | `20` | 环境采集间隔 |
 | `LA_ENV_SUMMARY_INTERVAL_SECONDS` | `600` | LLM 总结间隔（10 分钟） |
 | `LA_ENV_PING_TARGET` | `8.8.8.8` | Ping 目标 |
+| `LA_RAG_TOP_K` | `5` | RAG 默认召回 K |
+| `LA_RAG_MIN_SCORE` | `0.25` | RAG 最低相似度 |
+| `LA_RAG_SPLIT_MODE` | `rule` | 分块：`rule` / `semantic` / `semantic_embedding` / `structural` |
+| `LA_RAG_SPLIT_MODEL` | `qwen2.5:3b` | 语义分块裁判模型 |
+| `LA_RAG_SUMMARIZE` | `true` | 是否由本地模型总结 |
 
 ## 数据位置
 
 - 日志：`data/crawler/logs/{job_id}.log`
 - 产物：`data/crawler/artifacts/{job_id}.json`
 - 数据库：`data/crawler/crawler.db`（任务记录 + 对话记忆）
+- RAG：`data/rag/chroma/`、`data/rag/rag.db`

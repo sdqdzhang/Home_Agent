@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -8,11 +9,18 @@ from pathlib import Path
 class JobLogger:
     """爬取任务独立日志，写入固定目录。"""
 
-    def __init__(self, logs_dir: Path, job_id: str) -> None:
+    def __init__(
+        self,
+        logs_dir: Path,
+        job_id: str,
+        *,
+        on_line: Callable[[str], None] | None = None,
+    ) -> None:
         self.job_id = job_id
         self.log_path = logs_dir / f"{job_id}.log"
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         self._lines: list[str] = []
+        self._on_line = on_line
         self._logger = logging.getLogger(f"crawler.job.{job_id}")
         if not self._logger.handlers:
             handler = logging.FileHandler(self.log_path, encoding="utf-8")
@@ -20,27 +28,32 @@ class JobLogger:
             self._logger.addHandler(handler)
             self._logger.setLevel(logging.DEBUG)
 
-    def _stamp(self, level: str, message: str) -> str:
+    def _emit(self, level: str, message: str) -> str:
         ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
         line = f"[{ts}] [{level}] {message}"
         self._lines.append(line)
+        if self._on_line:
+            try:
+                self._on_line(line)
+            except Exception:
+                pass
         return line
 
     def info(self, message: str) -> None:
         self._logger.info(message)
-        self._stamp("INFO", message)
+        self._emit("INFO", message)
 
     def warning(self, message: str) -> None:
         self._logger.warning(message)
-        self._stamp("WARN", message)
+        self._emit("WARN", message)
 
     def error(self, message: str) -> None:
         self._logger.error(message)
-        self._stamp("ERROR", message)
+        self._emit("ERROR", message)
 
     def debug(self, message: str) -> None:
         self._logger.debug(message)
-        self._stamp("DEBUG", message)
+        self._emit("DEBUG", message)
 
     @property
     def lines(self) -> list[str]:
