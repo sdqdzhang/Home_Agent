@@ -6,18 +6,56 @@ from typing import Any
 from openai import AsyncOpenAI
 
 from shared.llm.config import LLMSettings, llm_settings
+from shared.llm.registry import get_model_registry
+from shared.llm.schemas import ResolvedLLMConfig
+from shared.llm.slots import DEFAULT_CHAT_SLOT
 
 
 class LLMClient:
-    """OpenAI 兼容 API 封装，供各模块复用。"""
+    """OpenAI 兼容 API 封装；可绑定 slot 从注册表解析配置。"""
 
-    def __init__(self, config: LLMSettings | None = None) -> None:
-        self.config = config or llm_settings
-        self._client = AsyncOpenAI(
-            base_url=self.config.base_url,
-            api_key=self.config.api_key,
-            timeout=self.config.timeout,
-        )
+    def __init__(
+        self,
+        config: LLMSettings | None = None,
+        *,
+        slot: str | None = None,
+    ) -> None:
+        self._static_config = config
+        self._slot = slot
+        self._openai: AsyncOpenAI | None = None
+        self._openai_key: tuple[str, str, float] | None = None
+
+    @property
+    def slot(self) -> str | None:
+        return self._slot
+
+    def resolve_config(self) -> ResolvedLLMConfig:
+        if self._static_config is not None:
+            cfg = self._static_config
+            return ResolvedLLMConfig(
+                slot_key=self._slot or DEFAULT_CHAT_SLOT,
+                capability="chat",
+                base_url=cfg.base_url,
+                api_key=cfg.api_key,
+                model=cfg.model,
+                timeout=cfg.timeout,
+                max_tokens=cfg.max_tokens,
+                temperature=cfg.temperature,
+                source="env_fallback",
+                endpoint_id=None,
+            )
+        return get_model_registry().resolve(self._slot or DEFAULT_CHAT_SLOT)
+
+    def _get_openai(self, cfg: ResolvedLLMConfig) -> AsyncOpenAI:
+        key = (cfg.base_url, cfg.api_key, cfg.timeout)
+        if self._openai is None or self._openai_key != key:
+            self._openai = AsyncOpenAI(
+                base_url=cfg.base_url,
+                api_key=cfg.api_key,
+                timeout=cfg.timeout,
+            )
+            self._openai_key = key
+        return self._openai
 
     async def chat(
         self,
@@ -28,16 +66,23 @@ class LLMClient:
         max_tokens: int | None = None,
         json_mode: bool = False,
     ) -> str:
+        cfg = self.resolve_config()
+        client = self._get_openai(cfg)
+
         kwargs: dict[str, Any] = {
-            "model": model or self.config.model,
+            "model": model or cfg.model,
             "messages": messages,
-            "temperature": temperature if temperature is not None else self.config.temperature,
-            "max_tokens": max_tokens or self.config.max_tokens,
         }
+        temp = temperature if temperature is not None else cfg.temperature
+        if temp is not None:
+            kwargs["temperature"] = temp
+        tokens = max_tokens if max_tokens is not None else cfg.max_tokens
+        if tokens is not None:
+            kwargs["max_tokens"] = tokens
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
 
-        response = await self._client.chat.completions.create(**kwargs)
+        response = await client.chat.completions.create(**kwargs)
         content = response.choices[0].message.content
         return content or ""
 
@@ -66,11 +111,21 @@ class LLMClient:
             raise
 
 
-_default_client: LLMClient | None = None
+_clients_by_slot: dict[str, LLMClient] = {}
 
 
-def get_llm_client() -> LLMClient:
-    global _default_client
-    if _default_client is None:
-        _default_client = LLMClient()
-    return _default_client
+def get_llm_client(slot: str | None = None, *, config: LLMSettings | None = None) -> LLMClient:
+    """获取 LLM 客户端。指定 slot 时从注册表解析；传 config 时用于测试/临时覆盖。"""
+    if config is not None:
+        return LLMClient(config=config, slot=slot)
+
+    key = slot or DEFAULT_CHAT_SLOT
+    if key not in _clients_by_slot:
+        _clients_by_slot[key] = LLMClient(slot=key)
+    return _clients_by_slot[key]
+
+
+def reset_llm_clients() -> None:
+    """测试用：清空按 slot 缓存的客户端。"""
+    global _clients_by_slot
+    _clients_by_slot = {}

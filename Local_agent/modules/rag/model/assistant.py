@@ -9,7 +9,7 @@ class RagAssistant:
     """RAG 本地小模型：阅读检索结果并总结，或直接拼接片段。"""
 
     def __init__(self) -> None:
-        self.llm = get_llm_client()
+        self.llm = get_llm_client("rag.summarize")
 
     async def summarize_answer(self, query: str, sources: list[SourceItem], *, history: list[dict[str, str]] | None = None) -> str:
         if not sources:

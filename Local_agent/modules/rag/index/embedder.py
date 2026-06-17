@@ -2,23 +2,37 @@ from __future__ import annotations
 
 from openai import OpenAI
 
-from modules.rag.config import rag_settings
+from shared.llm.registry import get_model_registry
+from shared.llm.schemas import ResolvedLLMConfig
 
 
 class OllamaEmbedder:
-    """通过 Ollama OpenAI 兼容接口生成 nomic-embed-text 向量。"""
+    """通过 OpenAI 兼容接口生成 embedding 向量。"""
 
-    def __init__(self) -> None:
-        self._client = OpenAI(
-            base_url=rag_settings.embed_base_url,
-            api_key=rag_settings.embed_api_key,
-        )
-        self.model = rag_settings.embed_model
+    def __init__(self, *, slot: str = "rag.embed") -> None:
+        self._slot = slot
+        self._client: OpenAI | None = None
+        self._client_key: tuple[str, str] | None = None
+
+    def _resolve(self) -> ResolvedLLMConfig:
+        return get_model_registry().resolve(self._slot)
+
+    def _get_client(self, cfg: ResolvedLLMConfig) -> OpenAI:
+        key = (cfg.base_url, cfg.api_key)
+        if self._client is None or self._client_key != key:
+            self._client = OpenAI(base_url=cfg.base_url, api_key=cfg.api_key)
+            self._client_key = key
+        return self._client
+
+    @property
+    def model(self) -> str:
+        return self._resolve().model
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        response = self._client.embeddings.create(model=self.model, input=texts)
+        cfg = self._resolve()
+        response = self._get_client(cfg).embeddings.create(model=cfg.model, input=texts)
         ordered = sorted(response.data, key=lambda item: item.index)
         return [item.embedding for item in ordered]
 

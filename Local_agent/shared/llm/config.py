@@ -1,4 +1,8 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.config import settings as app_settings
 
 
 class LLMSettings(BaseSettings):
@@ -12,6 +16,7 @@ class LLMSettings(BaseSettings):
     timeout: float = 120.0
     max_tokens: int = 4096
     temperature: float = 0.2
+    db_path: Path = app_settings.data_dir / "llm.db"
 
 
 llm_settings = LLMSettings()

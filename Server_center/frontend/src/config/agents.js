@@ -92,6 +92,15 @@ export const AGENTS = [
     description: '自我反思、错误分析与纠正建议',
     defaultMsgTypes: ['reflection_note', 'text'],
   },
+  {
+    id: 'llm',
+    label: '模型配置',
+    names: ['本地Agent', 'local_agent', 'llm'],
+    defaultMood: '就绪',
+    icon: '⚙️',
+    description: 'Local Agent LLM 端点与槽位绑定',
+    defaultMsgTypes: ['llm_config_result'],
+  },
 ]
 
 export const USER_SENDER = 'user_ui'

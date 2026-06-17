@@ -31,6 +31,9 @@ export function messageSummary(msg) {
   if (msg.msg_type === 'camera_capture') return '摄像头拍照'
   if (msg.msg_type === 'persona_state') return msg.message?.mood || '状态更新'
   if (msg.msg_type === 'rag_result') return msg.message?.query || 'RAG 检索结果'
+  if (msg.msg_type === 'llm_config_result') {
+    return msg.message?.ok ? '模型配置已更新' : '模型配置失败'
+  }
   if (msg.msg_type === 'reflection_note') return msg.message?.issue || '自省记录'
   if (msg.msg_type === 'memory_record') return msg.message?.key || '记忆写入'
   return `[${msg.msg_type}]`
@@ -38,7 +41,7 @@ export function messageSummary(msg) {
 
 /** @param {UiMessage} msg */
 export function countsAsUnread(msg) {
-  return msg.msg_type !== 'system_status' && msg.msg_type !== 'persona_state'
+  return msg.msg_type !== 'system_status' && msg.msg_type !== 'persona_state' && msg.msg_type !== 'llm_config_result'
 }
 
 /** @param {UiMessage[]} messages @param {{ id: string }} agent */
