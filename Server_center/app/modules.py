@@ -46,9 +46,9 @@ MODULES: tuple[ModuleDef, ...] = (
     ),
     ModuleDef(
         id="memory",
-        label="长期记忆模块",
-        names=("长期记忆模块", "memory"),
-        description="长期记忆的写入、检索与摘要",
+        label="记忆模块",
+        names=("记忆模块", "memory"),
+        description="记忆的写入、检索、压缩与反思",
         default_msg_types=("memory_record", "text"),
         icon="🧠",
     ),

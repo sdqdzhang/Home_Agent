@@ -49,11 +49,11 @@ export const AGENTS = [
   },
   {
     id: 'memory',
-    label: '长期记忆模块',
-    names: ['长期记忆模块', 'memory'],
+    label: '记忆模块',
+    names: ['记忆模块', 'memory'],
     defaultMood: '回忆中',
     icon: '🧠',
-    description: '长期记忆的写入、检索与摘要',
+    description: '记忆的写入、检索、压缩与反思',
     defaultMsgTypes: ['memory_record', 'text'],
   },
   {

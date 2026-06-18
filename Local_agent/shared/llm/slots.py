@@ -82,6 +82,27 @@ SLOT_DEFINITIONS: tuple[SlotDefinition, ...] = (
         capability="chat",
         description="模型代替用户审批红色命令",
     ),
+    SlotDefinition(
+        slot_key="memory.assess",
+        label="记忆重要性打分",
+        module="memory",
+        capability="chat",
+        description="观察事件 1-10 重要性评估",
+    ),
+    SlotDefinition(
+        slot_key="memory.reflect",
+        label="记忆反思",
+        module="memory",
+        capability="chat",
+        description="从工作记忆提炼高层洞察",
+    ),
+    SlotDefinition(
+        slot_key="memory.embed",
+        label="记忆向量化",
+        module="memory",
+        capability="embed",
+        description="记忆归档 embedding 模型",
+    ),
 )
 
 SLOT_BY_KEY: dict[str, SlotDefinition] = {item.slot_key: item for item in SLOT_DEFINITIONS}

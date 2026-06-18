@@ -14,6 +14,7 @@ def _utc_now() -> str:
 def build_seed_data() -> tuple[list[EndpointRecord], list[BindingRecord]]:
     """根据当前 .env / 模块配置生成首次 seed 的端点与绑定。"""
     from modules.env.config import env_settings
+    from modules.memory.config import memory_settings
     from modules.rag.config import rag_settings
     from shared.llm.config import llm_settings
 
@@ -156,6 +157,30 @@ def build_seed_data() -> tuple[list[EndpointRecord], list[BindingRecord]]:
             model_override=llm_settings.model or "llama3.2",
             temperature_override=0.0,
             max_tokens_override=256,
+            updated_at=now,
+        ),
+        BindingRecord(
+            slot_key="memory.assess",
+            endpoint_id=ep_default.id,
+            model_override=llm_settings.model or "llama3.2",
+            temperature_override=0.0,
+            max_tokens_override=64,
+            updated_at=now,
+        ),
+        BindingRecord(
+            slot_key="memory.reflect",
+            endpoint_id=ep_default.id,
+            model_override=llm_settings.model or "llama3.2",
+            temperature_override=0.3,
+            max_tokens_override=1024,
+            updated_at=now,
+        ),
+        BindingRecord(
+            slot_key="memory.embed",
+            endpoint_id=ep_rag_embed.id,
+            model_override=memory_settings.embed_model,
+            temperature_override=None,
+            max_tokens_override=None,
             updated_at=now,
         ),
     ]
