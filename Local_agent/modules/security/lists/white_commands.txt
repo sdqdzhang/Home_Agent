@@ -1,0 +1,11 @@
+# 白命令：只读/查看类命令，每行一条（不区分大小写，匹配命令首词）
+ls
+dir
+cat
+type
+head
+tail
+pwd
+Get-Content
+Get-ChildItem
+echo

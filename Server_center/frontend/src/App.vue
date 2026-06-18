@@ -8,6 +8,7 @@ import ChatInput from './components/ChatInput.vue'
 import EnvWorkspace from './components/EnvWorkspace.vue'
 import LlmConfigWorkspace from './components/LlmConfigWorkspace.vue'
 import RagWorkspace from './components/RagWorkspace.vue'
+import SecurityWorkspace from './components/SecurityWorkspace.vue'
 import MessageList from './components/MessageList.vue'
 import {
   agentMood,
@@ -278,6 +279,16 @@ onUnmounted(() => {
         @error="onWorkspaceError"
       />
 
+      <SecurityWorkspace
+        v-else-if="selectedAgentId === 'security'"
+        :messages="allMessages"
+        :loading="loading"
+        :agent="selectedAgent"
+        @send="onSend"
+        @responded="onResponded"
+        @error="onWorkspaceError"
+      />
+
       <LlmConfigWorkspace
         v-else-if="selectedAgentId === 'llm'"
         :messages="allMessages"
@@ -294,7 +305,7 @@ onUnmounted(() => {
           :agent="selectedAgent"
           @responded="onResponded"
         />
-        <ChatInput @send="onSend" />
+        <ChatInput v-if="selectedAgentId !== 'security'" @send="onSend" />
       </template>
     </main>
   </div>

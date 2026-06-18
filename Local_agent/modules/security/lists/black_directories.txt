@@ -1,0 +1,12 @@
+# 黑目录：系统目录、隐私目录（路径前缀匹配）
+C:/Windows/
+C:\Windows\
+/etc/
+/proc/
+/sys/
+~/.ssh/
+.ssh/
+keys/
+Local_agent/keys/
+.env
+Local_agent/.env

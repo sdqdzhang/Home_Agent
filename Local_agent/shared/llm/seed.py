@@ -134,6 +134,30 @@ def build_seed_data() -> tuple[list[EndpointRecord], list[BindingRecord]]:
             max_tokens_override=None,
             updated_at=now,
         ),
+        BindingRecord(
+            slot_key="security.judge",
+            endpoint_id=ep_default.id,
+            model_override=None,
+            temperature_override=0.0,
+            max_tokens_override=256,
+            updated_at=now,
+        ),
+        BindingRecord(
+            slot_key="security.chat",
+            endpoint_id=ep_default.id,
+            model_override=None,
+            temperature_override=None,
+            max_tokens_override=None,
+            updated_at=now,
+        ),
+        BindingRecord(
+            slot_key="security.auto_approve",
+            endpoint_id=ep_default.id,
+            model_override=llm_settings.model or "llama3.2",
+            temperature_override=0.0,
+            max_tokens_override=256,
+            updated_at=now,
+        ),
     ]
 
     # 确保 slot 数量与定义一致

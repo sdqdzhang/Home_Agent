@@ -22,6 +22,7 @@ export function messageSummary(msg) {
   const text = msg.message?.text || msg.message?.summary || msg.message?.query || ''
   if (text) return text.length > 42 ? `${text.slice(0, 42)}…` : text
   if (msg.msg_type === 'approval_request') return '⚠ 待审批请求'
+  if (msg.msg_type === 'security_yellow_log') return msg.message?.payload?.command || '黄色记录'
   if (msg.msg_type === 'execution_log') return msg.message?.summary || '执行日志'
   if (msg.msg_type === 'system_status') {
     if (msg.message?.alert) return `⚠ ${msg.message?.alert_reason || msg.message?.text || '系统告警'}`
@@ -228,6 +229,84 @@ export function buildCameraRequest(targetAgentId) {
       text: '请求摄像头拍照',
       role: 'user',
       payload: { action: 'camera' },
+    },
+    timestamp: Math.floor(Date.now() / 1000),
+  }
+}
+
+/** @param {UiMessage[]} messages @param {{ id: string, names: string[] }} agent */
+export function securityPendingApprovals(messages, agent) {
+  return messages
+    .filter(
+      (m) =>
+        belongsToAgent(m, agent) &&
+        m.msg_type === 'approval_request' &&
+        m.status === 'pending',
+    )
+    .sort((a, b) => b.timestamp - a.timestamp)
+}
+
+/** @param {UiMessage[]} messages @param {{ id: string, names: string[] }} agent */
+export function securityApprovalHistory(messages, agent) {
+  return messages
+    .filter(
+      (m) =>
+        belongsToAgent(m, agent) &&
+        m.msg_type === 'approval_request' &&
+        m.status &&
+        m.status !== 'pending',
+    )
+    .sort((a, b) => b.timestamp - a.timestamp)
+}
+
+/** @param {UiMessage[]} messages @param {{ id: string, names: string[] }} agent */
+export function securityYellowLogs(messages, agent) {
+  return messages
+    .filter((m) => belongsToAgent(m, agent) && m.msg_type === 'security_yellow_log')
+    .sort((a, b) => b.timestamp - a.timestamp)
+}
+
+/** @param {UiMessage[]} messages @param {{ id: string, names: string[] }} agent */
+export function securityChatMessages(messages, agent) {
+  return messages.filter(
+    (m) =>
+      belongsToAgent(m, agent) &&
+      m.msg_type === 'text' &&
+      !m.message?.payload?.action,
+  )
+}
+
+/** @param {string} targetAgentId */
+export function buildSecurityAutoApproveAllMessage(targetAgentId) {
+  const agent = findAgentByName(targetAgentId)
+  const target = agent?.names[0] || targetAgentId
+  return {
+    id: makeUserMessageId(),
+    name: USER_SENDER,
+    target,
+    msg_type: 'text',
+    message: {
+      text: '请求模型自动审批全部待审批项',
+      role: 'user',
+      payload: { action: 'auto_approve', all: true },
+    },
+    timestamp: Math.floor(Date.now() / 1000),
+  }
+}
+
+/** @param {string} targetAgentId @param {string} approvalId */
+export function buildSecurityAutoApproveMessage(targetAgentId, approvalId) {
+  const agent = findAgentByName(targetAgentId)
+  const target = agent?.names[0] || targetAgentId
+  return {
+    id: makeUserMessageId(),
+    name: USER_SENDER,
+    target,
+    msg_type: 'text',
+    message: {
+      text: '请求模型自动审批',
+      role: 'user',
+      payload: { action: 'auto_approve', approval_id: approvalId },
     },
     timestamp: Math.floor(Date.now() / 1000),
   }

@@ -33,7 +33,7 @@ MODULES: tuple[ModuleDef, ...] = (
         label="安全检查模块",
         names=("安全检查模块", "security"),
         description="危险操作审批与安全策略校验",
-        default_msg_types=("approval_request",),
+        default_msg_types=("approval_request", "security_yellow_log", "text"),
         icon="🛡️",
     ),
     ModuleDef(

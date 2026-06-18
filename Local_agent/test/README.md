@@ -19,6 +19,7 @@ pip install -r requirements.txt
 | `test_crawler_gui.py` | 测试爬取（可切换是否使用模型） | 无模型模式仅需网络 |
 | `test_env_gui.py` | 测试环境感知（含 Server 地址、测试连接、推送） | 推送需 Server Center 运行 |
 | `test_rag_gui.py` | RAG 入库（规则/语义分块）、问答、向量库浏览与删除 | 语义分块需 `qwen2.5:3b` |
+| `test_security_gui.py` | 安全检查：绿/红/黄命令、Server Center 审批 | Server Center + 黄色需 Ollama |
 
 ### 启动
 
@@ -28,6 +29,7 @@ python test/test_llm_gui.py
 python test/test_crawler_gui.py
 python test/test_env_gui.py
 python test/test_rag_gui.py
+python test/test_security_gui.py
 ```
 
 Windows 也可双击：
@@ -36,6 +38,7 @@ Windows 也可双击：
 - `test/run_crawler.bat`
 - `test/run_env.bat`
 - `test/run_rag.bat`
+- `test/run_security_gui.bat`
 
 ## 爬取：使用模型 vs 不使用模型
 

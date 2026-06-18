@@ -21,11 +21,10 @@ Local_agent/
 ├── modules/
 │   ├── crawler/            # 网页爬取模块
 │   ├── env/                # 环境感知模块（高频采集 / 低频汇报）
-│   └── rag/                # RAG 检索增强（Chroma + 手动入库）
-│       ├── collectors/     # 系统指标采集
-│       ├── model/          # LLM 运营总结
-│       ├── aggregator.py   # 10 分钟窗口统计压缩
-│       └── screenshot.py   # 按需桌面截图
+│   ├── rag/                # RAG 检索增强（Chroma + 手动入库）
+│   └── security/           # 安全检查（四列表 + 审批）
+│       ├── lists/          # 白/黑命令与目录（文本配置）
+│       └── INTEGRATION.md  # 执行模块对接说明
 ├── data/                   # 运行时数据（勿提交）
 ├── keys/                   # 客户端 RSA 密钥（勿提交）
 └── test/                   # 各模块图形界面测试（tkinter）
@@ -42,6 +41,7 @@ python test/test_llm_registry_gui.py  # 注册表 tk 可视化（本地直连 DB
 python test/test_crawler_gui.py  # 爬取（可勾选是否使用模型）
 python test/test_env_gui.py      # 环境感知（可勾选是否使用模型）
 python test/test_rag_gui.py      # RAG 入库与问答
+python test/test_security_gui.py # 安全检查（需 Server Center）
 ```
 
 ## 快速启动
@@ -94,6 +94,9 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8770
 | POST | `/rag/ingest/text` | 手动导入文本 |
 | POST | `/rag/query` | 检索问答（可指定 K、summarize） |
 | POST | `/rag/chat` | 带会话的 RAG 对话 |
+| GET | `/security/status` | 四列表、待审批与近期记录 |
+| POST | `/security/check` | 命令安全检查（可阻塞至审批结束） |
+| POST | `/security/chat` | 安全模块对话 |
 
 ### 主 Agent 读取环境状态
 
@@ -143,6 +146,15 @@ curl -X POST http://127.0.0.1:8770/crawler/chat \
 - Web UI 左侧选「RAG 模块」可直接对话；`summarize` 控制模型总结或直接返回片段
 
 详见 [RAG 模块文档](modules/rag/README.md)。
+
+### 安全检查
+
+- 模块名：`安全检查模块` / `security`
+- 上报类型：`approval_request`（红色审批）、`security_yellow_log`（黄色记录）、`text`（对话）
+- Web UI 左侧选「安全检查模块」：四块布局（待审批 / 黄色记录 / 审批界面 / 审批历史 + 对话）
+- 四列表文件：`modules/security/lists/*.txt`
+
+详见 [安全检查模块文档](modules/security/README.md)；执行模块对接见 [INTEGRATION.md](modules/security/INTEGRATION.md)。
 
 ### 模型配置（LLM 注册表）
 
@@ -197,7 +209,7 @@ curl -X POST http://127.0.0.1:8770/crawler/chat \
 
 **删除约束**：端点仍被 binding 引用时禁止删除，并返回友好错误（需先在 UI 改绑槽位）。
 
-**首次启动**：`app/main.py` 调用 `get_model_registry().ensure_seeded()`；DB 为空时按当前 `.env` 写入 3 个端点 + 8 个绑定。
+**首次启动**：`app/main.py` 调用 `get_model_registry().ensure_seeded()`；DB 为空时按当前 `.env` 写入 3 个端点 + 11 个绑定。
 
 ### 槽位（Slot）
 
@@ -211,6 +223,9 @@ curl -X POST http://127.0.0.1:8770/crawler/chat \
 | `crawler.chat` | crawler | chat | 爬虫对话 |
 | `env.summary` | env | chat | 监控周期总结 |
 | `env.chat` | env | chat | 环境问答 |
+| `security.judge` | security | chat | 黄色升红判定 |
+| `security.chat` | security | chat | 安全模块对话 |
+| `security.auto_approve` | security | chat | 模型自动审批 |
 
 主对话（jarvis）暂未接入。
 
@@ -254,6 +269,9 @@ vectors = embedder.embed(["文本"])
 | `CrawlerAssistant` 对话 | `crawler.chat` |
 | `EnvAssistant` 总结 | `env.summary` |
 | `EnvAssistant` 问答 | `env.chat` |
+| `SecurityJudge` | `security.judge` |
+| `SecurityAssistant` | `security.chat` |
+| `SecurityAutoApprover` | `security.auto_approve` |
 
 **注册表 CRUD（Python）**
 
@@ -361,6 +379,8 @@ DB 有数据后，修改上述 `.env` **不会**覆盖已有端点；仅在没�
 | `LA_RAG_EMBED_MODEL` | `nomic-embed-text` | 向量模型（**seed**） |
 | `LA_RAG_EMBED_BASE_URL` | 同 Ollama | 向量 API（**seed**） |
 | `LA_RAG_SUMMARIZE` | `true` | 是否由本地模型总结 |
+| `LA_SECURITY_APPROVAL_TIMEOUT_SECONDS` | `300` | 安全审批超时（秒） |
+| `LA_SECURITY_USE_MODEL_FOR_YELLOW` | `true` | 黄色是否调用模型升红 |
 | `LA_ENV_LLM_MODEL` | — | 可选，seed 时写入 env 槽位覆盖 |
 | `LA_ENV_LLM_TEMPERATURE` | `0.2` | seed 时 env 槽位温度覆盖 |
 
@@ -371,3 +391,4 @@ DB 有数据后，修改上述 `.env` **不会**覆盖已有端点；仅在没�
 - 产物：`data/crawler/artifacts/{job_id}.json`
 - 数据库：`data/crawler/crawler.db`（任务记录 + 对话记忆）
 - RAG：`data/rag/chroma/`、`data/rag/rag.db`
+- 安全审计：`data/security/security.db`

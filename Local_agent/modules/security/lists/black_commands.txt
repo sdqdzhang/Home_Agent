@@ -1,0 +1,14 @@
+# 黑命令：删除或会造成明显改变的命令
+rm
+del
+Remove-Item
+format
+shutdown
+restart
+chmod
+chown
+mkfs
+dd
+curl
+wget
+Invoke-WebRequest
