@@ -36,7 +36,7 @@ export const AGENTS = [
     defaultMood: '警惕',
     icon: '🛡️',
     description: '危险操作审批与安全策略校验',
-    defaultMsgTypes: ['approval_request'],
+    defaultMsgTypes: ['approval_request', 'security_yellow_log', 'text'],
   },
   {
     id: 'env',

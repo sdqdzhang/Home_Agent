@@ -17,6 +17,9 @@ from modules.env.service import EnvService
 from modules.rag import MODULE_ID as RAG_ID
 from modules.rag.router import router as rag_router
 from modules.rag.service import RagService
+from modules.security import MODULE_ID as SECURITY_ID, MODULE_NAME as SECURITY_NAME
+from modules.security.router import router as security_router
+from modules.security.service import SecurityService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -24,6 +27,7 @@ logger = logging.getLogger(__name__)
 crawler_service: CrawlerService | None = None
 env_service: EnvService | None = None
 rag_service: RagService | None = None
+security_service: SecurityService | None = None
 llm_config_service: LlmConfigService | None = None
 _ws_listeners: list[WebSocketListener] = []
 
@@ -77,7 +81,7 @@ def _dedupe_ws_handler(handler, *, ttl_seconds: float = 120):
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    global crawler_service, env_service, rag_service, llm_config_service, _ws_listeners
+    global crawler_service, env_service, rag_service, security_service, llm_config_service, _ws_listeners
 
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     settings.keys_dir.mkdir(parents=True, exist_ok=True)
@@ -89,17 +93,23 @@ async def lifespan(_: FastAPI):
     crawler_client = await _register_module_client("网页爬取模块", "crawler")
     env_client = await _register_module_client("环境感知模块", "env")
     rag_client = await _register_module_client("RAG模块", "rag")
+    security_client = await _register_module_client("安全检查模块", "security")
     llm_client = await _register_module_client("本地Agent", "llm")
 
     crawler_service = CrawlerService(server_client=crawler_client)
     env_service = EnvService(server_client=env_client)
     rag_service = RagService(server_client=rag_client)
+    security_service = SecurityService(server_client=security_client)
     llm_config_service = LlmConfigService(server_client=llm_client)
     await env_service.start(use_model=True)
 
     await _start_ws_listeners((CRAWLER_ID,), _dedupe_ws_handler(crawler_service.handle_incoming_message))
     await _start_ws_listeners((ENV_ID,), _dedupe_ws_handler(env_service.handle_incoming_message))
     await _start_ws_listeners((RAG_ID,), _dedupe_ws_handler(rag_service.handle_incoming_message))
+    await _start_ws_listeners(
+        (SECURITY_ID, SECURITY_NAME),
+        _dedupe_ws_handler(security_service.handle_ws_event),
+    )
     await _start_ws_listeners((LLM_ID,), _dedupe_ws_handler(llm_config_service.handle_incoming_message))
 
     yield
@@ -120,6 +130,7 @@ app = FastAPI(
 app.include_router(crawler_router)
 app.include_router(env_router)
 app.include_router(rag_router)
+app.include_router(security_router)
 
 
 @app.get("/health")
@@ -130,6 +141,7 @@ def health() -> dict[str, object]:
             "crawler": crawler_service is not None,
             "env": env_service is not None,
             "rag": rag_service is not None,
+            "security": security_service is not None,
             "llm_config": llm_config_service is not None,
         },
     }

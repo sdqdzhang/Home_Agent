@@ -110,7 +110,22 @@ class ServerCenterClient:
             target=target,
             msg_id=msg_id,
         )
-        return await self._post_encrypted("/api/v1/messages", payload)
+        result = await self._post_encrypted("/api/v1/messages", payload)
+        result["_outbound_id"] = payload["id"]
+        return result
+
+    @staticmethod
+    def message_id_from_response(response: dict[str, Any], fallback: str = "") -> str:
+        """Server Center 返回 { ok, message: { id, ... } }，取出消息 id。"""
+        message = response.get("message")
+        if isinstance(message, dict) and message.get("id"):
+            return str(message["id"])
+        outbound = response.get("_outbound_id")
+        if outbound:
+            return str(outbound)
+        if response.get("id"):
+            return str(response["id"])
+        return fallback
 
     async def fetch_encrypted_messages(
         self,
