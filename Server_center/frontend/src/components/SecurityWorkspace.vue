@@ -11,6 +11,7 @@ import {
   securityYellowLogs,
   sortMessagesAsc,
 } from '../utils/messages.js'
+import { useChatScroll } from '../utils/useChatScroll.js'
 
 const props = defineProps({
   messages: { type: Array, default: () => [] },
@@ -30,6 +31,7 @@ const pendingList = computed(() => securityPendingApprovals(props.messages, prop
 const yellowLogs = computed(() => securityYellowLogs(props.messages, props.agent))
 const approvalHistory = computed(() => securityApprovalHistory(props.messages, props.agent))
 const chatOnly = computed(() => sortMessagesAsc(securityChatMessages(props.messages, props.agent)))
+const { listEl, scrollToBottom } = useChatScroll(chatOnly)
 
 const selectedApproval = computed(() => {
   if (autoApprove.value) return null
@@ -103,6 +105,7 @@ async function triggerAutoApproveAll() {
 }
 
 async function onSend(text) {
+  scrollToBottom(false)
   emit('send', text)
 }
 </script>
@@ -260,7 +263,7 @@ async function onSend(text) {
 
     <!-- 底部对话 -->
     <div class="flex max-h-64 min-h-0 shrink-0 flex-col border-t border-surface-border">
-      <div class="min-h-0 flex-1 overflow-y-auto px-3 py-2">
+      <div ref="listEl" class="min-h-0 flex-1 overflow-y-auto px-3 py-2">
         <p v-if="!chatOnly.length" class="py-4 text-center text-xs text-slate-500">
           有待审批时以当前项为上下文；否则使用近期记录
         </p>

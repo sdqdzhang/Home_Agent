@@ -45,7 +45,7 @@ function formatTime(ts) {
       <p v-if="dash.alert_reason" class="mb-2 text-xs text-red-300">{{ dash.alert_reason }}</p>
 
       <div v-if="!dash.snapshot && !dash.llm_summary?.summary" class="py-6 text-center text-sm text-slate-500">
-        等待环境感知模块上报…
+        等待环境感知上报…
       </div>
 
       <div v-else class="max-h-[42vh] space-y-3 overflow-y-auto scrollbar-thin pr-1">

@@ -29,6 +29,7 @@ const wsConnected = ref(false)
 const healthy = ref(true)
 const error = ref('')
 const lastReadAt = ref(Object.fromEntries(agents.map((a) => [a.id, 0])))
+const messageListRef = ref(null)
 
 /** WebSocket 只订阅 user_ui；服务端会向 target + channel 双播，多订频道无必要 */
 const WS_CHANNELS = [WS_TARGET]
@@ -143,6 +144,7 @@ function connectAll() {
 
 async function onSend(text, attachments) {
   error.value = ''
+  messageListRef.value?.scrollToBottom(false)
   try {
     const msg = buildUserTextMessage(selectedAgentId.value, text, attachments)
     const result = await sendMessageLocal(msg)
@@ -300,6 +302,7 @@ onUnmounted(() => {
 
       <template v-else>
         <MessageList
+          ref="messageListRef"
           :messages="chatMessages"
           :loading="loading"
           :agent="selectedAgent"

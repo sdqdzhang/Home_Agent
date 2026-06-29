@@ -35,6 +35,7 @@ export function messageSummary(msg) {
   if (msg.msg_type === 'llm_config_result') {
     return msg.message?.ok ? '模型配置已更新' : '模型配置失败'
   }
+  if (msg.msg_type === 'plan_result') return msg.message?.goal || msg.message?.summary || '任务规划'
   if (msg.msg_type === 'reflection_note') return msg.message?.issue || '自省记录'
   if (msg.msg_type === 'memory_record') return msg.message?.key || '记忆写入'
   return `[${msg.msg_type}]`

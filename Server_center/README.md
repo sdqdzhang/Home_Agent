@@ -321,11 +321,12 @@ ws://your-server:8765/ws/{target}
 
 ## 已注册模块
 
-服务端与前端均已注册以下 9 个模块。各模块推送消息时，`name` 使用下表「发送名」之一，`target` 固定为 `user_ui`。
+服务端与前端均已注册以下模块（含未开发的占位模块）。各模块推送消息时，`name` 使用下表「发送名」之一，`target` 固定为 `user_ui`。
 
 | 模块 ID | 显示名 | 发送名（name 字段） | 常用 msg_type |
 |---------|--------|---------------------|---------------|
 | `jarvis` | 主对话 | `jarvis` / `主对话` | `text` |
+| `planning` | 规划 | `规划模块` / `planning` | `plan_result` |
 | `emotion` | 情感与性格状态 | `情感与性格状态模块` / `emotion` | `persona_state` |
 | `security` | 安全检查 | `安全检查模块` / `security` | `approval_request` |
 | `env` | 环境感知 | `环境感知模块` / `env_sense` | `system_status` |
@@ -385,6 +386,7 @@ ws://your-server:8765/ws/{target}
 | `camera_capture` | `DesktopScreenshot.vue` | 摄像头拍照预览 |
 | `persona_state` | `PersonaState.vue` | 情感/性格状态卡片，**不触发**未读 |
 | `rag_result` | `RagResult.vue` | RAG 查询、回答与来源列表 |
+| `plan_result` | `PlanResult.vue` | 任务规划：目标 / 步骤 / 状态 |
 | `reflection_note` | `ReflectionNote.vue` | 自省：问题 / 分析 / 纠正 |
 | `memory_record` | `MemoryRecord.vue` | 记忆键与摘要 |
 
@@ -513,6 +515,19 @@ ws://your-server:8765/ws/{target}
 ```
 
 浏览器端读取文件后以 `ingest_text` 发送（非服务器路径）。需 Local Agent RAG 模块在线并监听 WebSocket。
+
+**plan_result**（规划模块，Local Agent 侧未开发，格式占位）
+```json
+{
+  "goal": "整理项目文档并写入 RAG",
+  "summary": "分三步：爬取、清洗、入库",
+  "status": "draft",
+  "steps": [
+    { "title": "爬取 README 所在站点", "target_module": "crawler" },
+    { "title": "切块入库", "target_module": "rag" }
+  ]
+}
+```
 
 **reflection_note**
 ```json

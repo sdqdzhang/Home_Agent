@@ -4,7 +4,7 @@ defineProps({
   subtitle: { type: String, default: '' },
   mood: { type: String, default: '平静' },
   globalMood: { type: String, default: null },
-  icon: { type: String, default: '💬' },
+  icon: { type: String, default: '◉' },
   showBack: { type: Boolean, default: false },
 })
 
@@ -26,7 +26,7 @@ defineEmits(['back'])
         </svg>
       </button>
 
-      <span class="text-xl">{{ icon }}</span>
+      <span class="agent-icon text-slate-200">{{ icon }}</span>
 
       <div class="min-w-0 flex-1">
         <h1 class="truncate text-base font-semibold text-slate-100">{{ title }}</h1>

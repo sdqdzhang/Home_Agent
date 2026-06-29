@@ -21,6 +21,8 @@ Local_agent/
 ├── modules/
 │   ├── crawler/            # 网页爬取模块
 │   ├── env/                # 环境感知模块（高频采集 / 低频汇报）
+│   ├── memory/             # 记忆模块
+│   ├── planning/           # 规划模块（占位，未开发）
 │   ├── rag/                # RAG 检索增强（Chroma + 手动入库）
 │   └── security/           # 安全检查（四列表 + 审批）
 │       ├── lists/          # 白/黑命令与目录（文本配置）
@@ -146,6 +148,21 @@ curl -X POST http://127.0.0.1:8770/crawler/chat \
 - Web UI 左侧选「RAG 模块」可直接对话；`summarize` 控制模型总结或直接返回片段
 
 详见 [RAG 模块文档](modules/rag/README.md)。
+
+### 规划（占位）
+
+- 模块名：`规划模块` / `planning` / `planner`
+- 上报类型：`plan_result`（任务规划）、`text`（对话）
+- **Local Agent 侧尚未实现**；Web UI 左侧已有「规划」频道，可接收占位消息
+- 与执行、自省模块形成「规划 → 执行 → 反思」链路（逻辑待设计）
+
+详见 [规划模块文档](modules/planning/README.md)。
+
+### 执行（占位）
+
+- 模块名：`执行模块` / `executor` / `execution`
+- 上报类型：`execution_log`
+- **Local Agent 侧尚未实现**；Web UI 左侧已有「执行」频道
 
 ### 安全检查
 
