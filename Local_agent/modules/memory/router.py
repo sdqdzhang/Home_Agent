@@ -6,6 +6,7 @@ from fastapi import APIRouter
 
 from modules.memory.schemas import (
     CoreMemoryUpsert,
+    IngestDialogueRequest,
     ObserveRequest,
     RecallRequest,
     ReflectRequest,
@@ -37,12 +38,24 @@ async def observe(req: ObserveRequest) -> dict[str, Any]:
     return result.model_dump()
 
 
+@router.post("/ingest-dialogue")
+async def ingest_dialogue(req: IngestDialogueRequest) -> dict[str, Any]:
+    service = _get_service()
+    if not service:
+        return {"error": "memory service not started"}
+    try:
+        result = await service.ingest_dialogue(req)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return result.model_dump()
+
+
 @router.post("/recall")
 async def recall(req: RecallRequest) -> dict[str, Any]:
     service = _get_service()
     if not service:
         return {"error": "memory service not started"}
-    result = service.recall(req)
+    result = await service.recall(req)
     return result.model_dump()
 
 

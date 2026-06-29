@@ -97,6 +97,20 @@ SLOT_DEFINITIONS: tuple[SlotDefinition, ...] = (
         description="从工作记忆提炼高层洞察",
     ),
     SlotDefinition(
+        slot_key="memory.summarize",
+        label="对话总结入库",
+        module="memory",
+        capability="chat",
+        description="将一段对话原文总结为一句记忆",
+    ),
+    SlotDefinition(
+        slot_key="memory.tag",
+        label="记忆主题标签",
+        module="memory",
+        capability="chat",
+        description="为记忆内容与检索 query 生成主题 tags",
+    ),
+    SlotDefinition(
         slot_key="memory.embed",
         label="记忆向量化",
         module="memory",

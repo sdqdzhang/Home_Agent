@@ -176,6 +176,22 @@ def build_seed_data() -> tuple[list[EndpointRecord], list[BindingRecord]]:
             updated_at=now,
         ),
         BindingRecord(
+            slot_key="memory.summarize",
+            endpoint_id=ep_default.id,
+            model_override=llm_settings.model or "llama3.2",
+            temperature_override=0.0,
+            max_tokens_override=256,
+            updated_at=now,
+        ),
+        BindingRecord(
+            slot_key="memory.tag",
+            endpoint_id=ep_default.id,
+            model_override=llm_settings.model or "llama3.2",
+            temperature_override=0.0,
+            max_tokens_override=128,
+            updated_at=now,
+        ),
+        BindingRecord(
             slot_key="memory.embed",
             endpoint_id=ep_rag_embed.id,
             model_override=memory_settings.embed_model,

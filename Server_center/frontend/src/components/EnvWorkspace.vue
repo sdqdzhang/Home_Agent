@@ -4,6 +4,7 @@ import ChatInput from './ChatInput.vue'
 import EnvDashboard from './EnvDashboard.vue'
 import MessageItem from './MessageItem.vue'
 import { envChatMessages, sortMessagesAsc } from '../utils/messages.js'
+import { useChatScroll } from '../utils/useChatScroll.js'
 
 const props = defineProps({
   messages: { type: Array, default: () => [] },
@@ -15,6 +16,12 @@ const props = defineProps({
 const emit = defineEmits(['send', 'screenshot', 'camera', 'responded'])
 
 const chatOnly = computed(() => sortMessagesAsc(envChatMessages(props.messages, props.agent)))
+const { listEl, scrollToBottom } = useChatScroll(chatOnly)
+
+function onChatSend(text, att) {
+  scrollToBottom(false)
+  emit('send', text, att)
+}
 </script>
 
 <template>
@@ -41,12 +48,12 @@ const chatOnly = computed(() => sortMessagesAsc(envChatMessages(props.messages, 
       </div>
     </div>
 
-    <div class="flex-1 overflow-y-auto px-3 py-3 scrollbar-thin md:px-6">
+    <div ref="listEl" class="flex-1 overflow-y-auto px-3 py-3 scrollbar-thin md:px-6">
       <div v-if="loading" class="flex h-32 items-center justify-center text-sm text-slate-500">
         加载中…
       </div>
       <p v-else-if="!chatOnly.length" class="py-8 text-center text-sm text-slate-500">
-        向环境感知模块提问，或点击「远程截图」/「摄像头拍照」
+        向环境感知提问，或点击「远程截图」/「摄像头拍照」
       </p>
       <div v-else class="mx-auto flex max-w-3xl flex-col gap-3">
         <MessageItem
@@ -58,6 +65,6 @@ const chatOnly = computed(() => sortMessagesAsc(envChatMessages(props.messages, 
       </div>
     </div>
 
-    <ChatInput @send="(text, att) => emit('send', text, att)" />
+    <ChatInput @send="onChatSend" />
   </div>
 </template>

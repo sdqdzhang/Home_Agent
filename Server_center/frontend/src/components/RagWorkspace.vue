@@ -9,6 +9,7 @@ import {
   ragIngestLogs,
   sortMessagesAsc,
 } from '../utils/messages.js'
+import { useChatScroll } from '../utils/useChatScroll.js'
 
 const props = defineProps({
   messages: { type: Array, default: () => [] },
@@ -37,6 +38,12 @@ const fileInput = ref(null)
 
 const chatOnly = computed(() => sortMessagesAsc(ragChatMessages(props.messages, props.agent)))
 const ingestLogs = computed(() => ragIngestLogs(props.messages, props.agent))
+const { listEl, scrollToBottom } = useChatScroll(chatOnly)
+
+function onChatSend(text, att) {
+  scrollToBottom(false)
+  emit('send', text, att)
+}
 
 function formatTime(ts) {
   return new Date(ts * 1000).toLocaleTimeString('zh-CN')
@@ -110,10 +117,10 @@ async function onFileSelected(event) {
     <section class="flex min-h-0 min-w-0 flex-1 flex-col border-b border-surface-border md:w-1/2 md:border-b-0 md:border-r">
       <div class="shrink-0 border-b border-surface-border bg-violet-500/5 px-4 py-2 md:px-5">
         <p class="text-xs font-medium text-violet-300">对话检索</p>
-        <p class="text-[11px] text-slate-500">向 RAG 模块提问，基于向量库召回并回答</p>
+        <p class="text-[11px] text-slate-500">向 RAG 提问，基于向量库召回并回答</p>
       </div>
 
-      <div class="flex-1 overflow-y-auto px-3 py-3 scrollbar-thin md:px-5">
+      <div ref="listEl" class="flex-1 overflow-y-auto px-3 py-3 scrollbar-thin md:px-5">
         <div v-if="loading" class="flex h-32 items-center justify-center text-sm text-slate-500">加载中…</div>
         <p v-else-if="!chatOnly.length" class="py-10 text-center text-sm text-slate-500">
           在下方输入问题，例如「文档里如何创建 Git 仓库？」
@@ -128,7 +135,7 @@ async function onFileSelected(event) {
         </div>
       </div>
 
-      <ChatInput @send="(text, att) => emit('send', text, att)" />
+      <ChatInput @send="onChatSend" />
     </section>
 
     <!-- 右：入库 -->

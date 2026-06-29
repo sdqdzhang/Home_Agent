@@ -8,6 +8,7 @@ from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
 
 from modules.memory.config import memory_settings
 from modules.memory.index.embedder import MemoryEmbedder
+from modules.memory.recall.tags import format_embed_document, strip_embed_document, tags_from_metadata, tags_to_csv
 
 
 class _MemoryEmbeddingFunction(EmbeddingFunction[Documents]):
@@ -45,18 +46,23 @@ class MemoryVectorStore:
         importance: float,
         kind: str,
         created_at: str,
+        tags: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> str:
         collection = self.get_collection()
         chunk_id = f"{memory_id}__{uuid.uuid4().hex[:8]}"
+        tag_list = tags or tags_from_metadata(metadata)
         meta = {
             "memory_id": memory_id,
             "importance": float(importance),
             "kind": kind,
             "created_at": created_at,
+            "content": content,
+            "tags_csv": tags_to_csv(tag_list),
             **(metadata or {}),
         }
-        collection.add(ids=[chunk_id], documents=[content], metadatas=[meta])
+        document = format_embed_document(content, tag_list)
+        collection.add(ids=[chunk_id], documents=[document], metadatas=[meta])
         return chunk_id
 
     def query(self, query_text: str, *, top_k: int) -> list[dict[str, Any]]:
@@ -86,3 +92,42 @@ class MemoryVectorStore:
 
     def count(self) -> int:
         return self.get_collection().count()
+
+    def list_all(self) -> list[dict[str, Any]]:
+        collection = self.get_collection()
+        if collection.count() == 0:
+            return []
+        data = collection.get(include=["documents", "metadatas"])
+        ids = data.get("ids") or []
+        docs = data.get("documents") or []
+        metas = data.get("metadatas") or []
+        items: list[dict[str, Any]] = []
+        for i, chunk_id in enumerate(ids):
+            meta = metas[i] if i < len(metas) else {}
+            raw_text = docs[i] if i < len(docs) else ""
+            text = str(meta.get("content") or strip_embed_document(raw_text))
+            tag_list = tags_from_metadata(meta)
+            items.append(
+                {
+                    "chunk_id": chunk_id,
+                    "text": text,
+                    "metadata": meta or {},
+                    "memory_id": str(meta.get("memory_id") or chunk_id),
+                    "importance": float(meta.get("importance") or 0),
+                    "kind": str(meta.get("kind") or ""),
+                    "created_at": str(meta.get("created_at") or ""),
+                    "tags": tag_list,
+                }
+            )
+        items.sort(key=lambda row: row.get("created_at") or "", reverse=True)
+        return items
+
+    def clear(self) -> int:
+        """删除 archive collection，返回清除前向量条数。"""
+        name = self._collection_name()
+        count = self.count()
+        try:
+            self._client.delete_collection(name)
+        except Exception:
+            pass
+        return count

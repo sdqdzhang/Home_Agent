@@ -72,10 +72,10 @@ function working(agent) {
         @click="emit('select', agent.id)"
       >
         <div
-          class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-lg"
+          class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
           :class="selectedId === agent.id ? 'bg-indigo-500/25' : 'bg-slate-700/80'"
         >
-          {{ agent.icon || agent.label.slice(0, 1) }}
+          <span class="agent-icon text-slate-200">{{ agent.icon || agent.label.slice(0, 1) }}</span>
         </div>
 
         <div class="min-w-0 flex-1">

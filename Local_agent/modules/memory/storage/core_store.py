@@ -71,3 +71,10 @@ class CoreMemoryStore:
         with self._connect() as conn:
             row = conn.execute("SELECT COUNT(*) AS c FROM core_memories").fetchone()
         return int(row["c"]) if row else 0
+
+    def clear_all(self) -> int:
+        with self._connect() as conn:
+            row = conn.execute("SELECT COUNT(*) AS c FROM core_memories").fetchone()
+            count = int(row["c"]) if row else 0
+            conn.execute("DELETE FROM core_memories")
+            return count

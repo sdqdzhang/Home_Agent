@@ -11,12 +11,30 @@ MemoryKind = Literal["observation", "insight"]
 class ObserveRequest(BaseModel):
     content: str = Field(min_length=1)
     kind: MemoryKind = "observation"
+    tags: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ObserveResponse(BaseModel):
     memory_id: str
     content: str
+    tags: list[str] = Field(default_factory=list)
+    importance: float
+    kind: MemoryKind
+    working_count: int
+    consolidated: bool
+
+
+class IngestDialogueRequest(BaseModel):
+    dialogue: str = Field(min_length=1)
+    tags: list[str] = Field(default_factory=list)
+
+
+class IngestDialogueResponse(BaseModel):
+    summary: str
+    memory_id: str
+    content: str
+    tags: list[str] = Field(default_factory=list)
     importance: float
     kind: MemoryKind
     working_count: int
@@ -26,11 +44,13 @@ class ObserveResponse(BaseModel):
 class RecallRequest(BaseModel):
     query: str = Field(min_length=1)
     top_k: int | None = None
+    tags: list[str] = Field(default_factory=list)
 
 
 class RecallItem(BaseModel):
     memory_id: str
     content: str
+    tags: list[str] = Field(default_factory=list)
     importance: float
     kind: MemoryKind
     created_at: str
@@ -38,6 +58,8 @@ class RecallItem(BaseModel):
     recency_score: float
     importance_score: float
     relevance_score: float
+    vector_relevance_score: float = 0.0
+    tag_score: float = 0.0
 
 
 class RecallResponse(BaseModel):
@@ -52,6 +74,7 @@ class ReflectRequest(BaseModel):
 class ReflectInsight(BaseModel):
     memory_id: str
     tag: str
+    tags: list[str] = Field(default_factory=list)
     content: str
     importance: float
     assess_reason: str = ""

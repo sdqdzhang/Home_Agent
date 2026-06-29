@@ -1,7 +1,7 @@
 <script setup>
-import { nextTick, onMounted, ref, watch } from 'vue'
 import MessageItem from './MessageItem.vue'
 import ModuleEmpty from './ModuleEmpty.vue'
+import { useChatScroll } from '../utils/useChatScroll.js'
 
 const props = defineProps({
   messages: { type: Array, default: () => [] },
@@ -11,21 +11,9 @@ const props = defineProps({
 
 const emit = defineEmits(['responded'])
 
-const listEl = ref(null)
+const { listEl, scrollToBottom } = useChatScroll(() => props.messages)
 
-async function scrollToBottom(smooth = true) {
-  await nextTick()
-  if (!listEl.value) return
-  listEl.value.scrollTo({
-    top: listEl.value.scrollHeight,
-    behavior: smooth ? 'smooth' : 'auto',
-  })
-}
-
-watch(() => props.messages.length, () => scrollToBottom())
-watch(() => props.messages[props.messages.length - 1]?.id, () => scrollToBottom())
-
-onMounted(() => scrollToBottom(false))
+defineExpose({ scrollToBottom })
 
 function onResponded(msg) {
   emit('responded', msg)

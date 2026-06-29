@@ -6,7 +6,7 @@ defineProps({
 
 <template>
   <div class="flex flex-col items-center justify-center px-6 py-16 text-center">
-    <span class="text-4xl">{{ agent.icon }}</span>
+    <span class="agent-icon-lg text-slate-300">{{ agent.icon }}</span>
     <h3 class="mt-3 text-base font-medium text-slate-200">{{ agent.label }}</h3>
     <p class="mt-2 max-w-sm text-sm leading-relaxed text-slate-500">{{ agent.description }}</p>
     <p class="mt-4 text-xs text-slate-600">

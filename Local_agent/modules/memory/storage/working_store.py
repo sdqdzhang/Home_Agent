@@ -77,6 +77,24 @@ class WorkingMemoryStore:
             row = conn.execute("SELECT COUNT(*) AS c FROM working_memories").fetchone()
         return int(row["c"]) if row else 0
 
+    def list_all(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, content, importance, kind, created_at, metadata
+                FROM working_memories
+                ORDER BY created_at DESC
+                """
+            ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
+    def clear_all(self) -> int:
+        with self._connect() as conn:
+            row = conn.execute("SELECT COUNT(*) AS c FROM working_memories").fetchone()
+            count = int(row["c"]) if row else 0
+            conn.execute("DELETE FROM working_memories")
+            return count
+
     def list_recent(self, limit: int = 20) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(

@@ -29,6 +29,9 @@ class MemorySettings(BaseSettings):
     weight_importance: float = 0.3
     weight_relevance: float = 0.4
 
+    relevance_vector_weight: float = 0.65
+    relevance_tag_weight: float = 0.35
+
     reflection_min_importance: float = 6.0
 
 
