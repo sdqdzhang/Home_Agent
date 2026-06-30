@@ -9,3 +9,4 @@ pwd
 Get-Content
 Get-ChildItem
 echo
+executor:file.read

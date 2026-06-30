@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
+from modules.security.rules.lists_store import LIST_KEYS, snapshot_lists, write_list_items
 from modules.security.schemas import CheckRequest
 
 router = APIRouter(prefix="/security", tags=["security"])
@@ -18,6 +19,11 @@ class ChatRequest(BaseModel):
 class AutoApproveRequest(BaseModel):
     approval_id: str | None = None
     all: bool = False
+
+
+class ListsSetRequest(BaseModel):
+    list_key: str
+    items: list[str] = Field(default_factory=list)
 
 
 def _get_service():
@@ -85,6 +91,19 @@ async def reload_lists_endpoint() -> dict[str, Any]:
     from modules.security.rules import reload_lists
 
     return {"lists": reload_lists()}
+
+
+@router.get("/lists")
+async def get_lists() -> dict[str, Any]:
+    return {"lists": snapshot_lists(), "list_keys": sorted(LIST_KEYS)}
+
+
+@router.put("/lists/{list_key}")
+async def set_list(list_key: str, req: ListsSetRequest) -> dict[str, Any]:
+    if list_key not in LIST_KEYS:
+        return {"error": f"unknown list_key: {list_key}"}
+    saved = write_list_items(list_key, req.items)
+    return {"list_key": list_key, "items": saved, "lists": snapshot_lists()}
 
 
 @router.get("/health")

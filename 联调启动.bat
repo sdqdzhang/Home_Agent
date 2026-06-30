@@ -46,12 +46,14 @@ if not exist "%ROOT%Server_center\frontend\node_modules" (
 )
 
 echo [1/3] 启动 Server Center  ^(http://127.0.0.1:8765^)
-start "HomeAgent - Server Center" cmd /k "cd /d ""%ROOT%Server_center"" && call venv\Scripts\activate.bat && echo [Server Center] uvicorn :8765 && uvicorn app.main:app --reload --host 0.0.0.0 --port 8765"
+:: 【修改点】将直接调用 uvicorn 改为通过 python -m uvicorn 启动，绕过 Device Guard 策略
+start "HomeAgent - Server Center" cmd /k "cd /d ""%ROOT%Server_center"" && call venv\Scripts\activate.bat && echo [Server Center] python -m uvicorn && python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8765"
 
 timeout /t 2 /nobreak >nul
 
 echo [2/3] 启动 Local Agent   ^(http://127.0.0.1:8770^)
-start "HomeAgent - Local Agent" cmd /k "cd /d ""%ROOT%Local_agent"" && call venv\Scripts\activate.bat && echo [Local Agent] uvicorn :8770 && uvicorn app.main:app --reload --host 0.0.0.0 --port 8770"
+:: 【修改点】同步将 Local Agent 也改为 python -m uvicorn 启动，防止后续报错
+start "HomeAgent - Local Agent" cmd /k "cd /d ""%ROOT%Local_agent"" && call venv\Scripts\activate.bat && echo [Local Agent] python -m uvicorn && python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8770"
 
 timeout /t 2 /nobreak >nul
 

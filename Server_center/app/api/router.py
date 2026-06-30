@@ -4,6 +4,7 @@ from app.modules import MODULES, module_to_dict, resolve_module
 from app.crypto.rsa import decrypt_payload_b64, encrypt_payload_b64, public_key_to_pem
 from app.models.message import ClientRegistration, EncryptedPayload, InboundMessage, ResponseBody
 from app.services.message_service import message_service
+from app.services.terminal_relay import terminal_relay
 
 router = APIRouter(prefix="/api/v1")
 
@@ -126,6 +127,16 @@ async def respond_message(message_id: str, body: EncryptedPayload) -> dict:
 async def respond_message_local(message_id: str, body: ResponseBody) -> dict:
     """Plaintext respond endpoint for the built-in web UI (same origin)."""
     return await _handle_response(message_id, body)
+
+
+@router.get("/terminal/status")
+def terminal_status() -> dict:
+    from app.config import settings
+
+    return {
+        "enabled": settings.terminal_enabled,
+        "agent_connected": terminal_relay.agent_connected,
+    }
 
 
 @router.post("/clients/register")

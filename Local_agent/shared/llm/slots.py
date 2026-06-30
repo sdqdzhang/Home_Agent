@@ -117,6 +117,13 @@ SLOT_DEFINITIONS: tuple[SlotDefinition, ...] = (
         capability="embed",
         description="记忆归档 embedding 模型",
     ),
+    SlotDefinition(
+        slot_key="executor.chat",
+        label="执行动作解析",
+        module="executor",
+        capability="chat",
+        description="将明确自然语言动作解析为 shell.run / file.read / file.write JSON",
+    ),
 )
 
 SLOT_BY_KEY: dict[str, SlotDefinition] = {item.slot_key: item for item in SLOT_DEFINITIONS}

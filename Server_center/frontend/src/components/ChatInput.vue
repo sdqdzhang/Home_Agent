@@ -44,7 +44,7 @@ function submit() {
   emit(
     'send',
     value,
-    files.value.map(({ name, size }) => ({ name, size })),
+    files.value.map(({ name, size, raw }) => ({ name, size, raw })),
   )
   text.value = ''
   files.value = []

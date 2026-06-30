@@ -28,7 +28,11 @@ const lines = (msg) => {
       >
         <div class="min-w-0 flex-1">
           <p class="truncate text-sm text-slate-200">{{ summary(msg) }}</p>
-          <p class="text-xs text-slate-500">{{ formatTime(msg.timestamp) }}</p>
+          <p class="text-xs text-slate-500">
+            {{ formatTime(msg.timestamp) }}
+            <span v-if="msg.message?.status === 'running'" class="ml-2 text-amber-400">执行中…</span>
+            <span v-else-if="msg.message?.status === 'cancelled'" class="ml-2 text-red-400">已终止</span>
+          </p>
         </div>
         <span class="shrink-0 text-slate-400 transition-transform" :class="open && 'rotate-180'">▼</span>
       </button>
