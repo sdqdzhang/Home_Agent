@@ -1,14 +1,16 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { AGENTS } from './config/agents.js'
-import { connectWebSocket, fetchHealth, fetchMessages, sendMessageLocal, WS_TARGET } from './api/client.js'
+import { connectWebSocket, fetchChatMessages, fetchHealth, sendMessageLocal, WS_TARGET } from './api/client.js'
 import AgentSidebar from './components/AgentSidebar.vue'
 import ChatHeader from './components/ChatHeader.vue'
 import ChatInput from './components/ChatInput.vue'
+import ExecutorWorkspace from './components/ExecutorWorkspace.vue'
 import EnvWorkspace from './components/EnvWorkspace.vue'
 import LlmConfigWorkspace from './components/LlmConfigWorkspace.vue'
 import RagWorkspace from './components/RagWorkspace.vue'
 import SecurityWorkspace from './components/SecurityWorkspace.vue'
+import TerminalWorkspace from './components/TerminalWorkspace.vue'
 import MessageList from './components/MessageList.vue'
 import {
   agentMood,
@@ -30,6 +32,7 @@ const healthy = ref(true)
 const error = ref('')
 const lastReadAt = ref(Object.fromEntries(agents.map((a) => [a.id, 0])))
 const messageListRef = ref(null)
+const executorWorkspaceRef = ref(null)
 
 /** WebSocket 只订阅 user_ui；服务端会向 target + channel 双播，多订频道无必要 */
 const WS_CHANNELS = [WS_TARGET]
@@ -47,6 +50,29 @@ const chatMessages = computed(() =>
 const currentMood = computed(() => agentMood(allMessages.value, selectedAgent.value))
 const globalMood = computed(() => globalEmotionMood(allMessages.value))
 
+function markAgentRead(agentId, atSeconds) {
+  const ts = atSeconds ?? Math.floor(Date.now() / 1000)
+  const prev = lastReadAt.value[agentId] || 0
+  if (ts > prev) {
+    lastReadAt.value[agentId] = ts
+  }
+}
+
+/** 用户是否正在看对话区（桌面端侧栏+主区同屏也算） */
+function isViewingAgentChat() {
+  if (mobileView.value === 'chat') return true
+  if (typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches) {
+    return true
+  }
+  return false
+}
+
+function maybeMarkReadForMessage(item) {
+  if (!item || !isViewingAgentChat()) return
+  if (!belongsToAgent(item, selectedAgent.value)) return
+  markAgentRead(selectedAgentId.value, item.timestamp)
+}
+
 function upsertMessage(item) {
   if (!item?.id) return
   const idx = allMessages.value.findIndex((m) => m.id === item.id)
@@ -57,15 +83,12 @@ function upsertMessage(item) {
   } else {
     allMessages.value = [...allMessages.value, item]
   }
+  maybeMarkReadForMessage(item)
 }
 
 function mergeMessages(incoming) {
   if (!Array.isArray(incoming)) return
   for (const msg of incoming) upsertMessage(msg)
-}
-
-function markAgentRead(agentId) {
-  lastReadAt.value[agentId] = Math.floor(Date.now() / 1000)
 }
 
 function selectAgent(agentId) {
@@ -82,8 +105,10 @@ async function loadMessages() {
   loading.value = true
   error.value = ''
   try {
-    const msgs = await fetchMessages({ target: WS_TARGET, limit: 300 })
-    allMessages.value = msgs
+    allMessages.value = await fetchChatMessages(300)
+    if (isViewingAgentChat()) {
+      markAgentRead(selectedAgentId.value)
+    }
   } catch (e) {
     error.value = e.message
   } finally {
@@ -93,8 +118,7 @@ async function loadMessages() {
 
 async function refreshMessagesQuiet() {
   try {
-    const msgs = await fetchMessages({ target: WS_TARGET, limit: 300 })
-    mergeMessages(msgs)
+    mergeMessages(await fetchChatMessages(300))
   } catch {
     /* 静默轮询失败不打断 UI */
   }
@@ -142,13 +166,44 @@ function connectAll() {
   }
 }
 
-async function onSend(text, attachments) {
+async function readAttachmentText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(reader.error || new Error('读取文件失败'))
+    reader.readAsText(file, 'utf-8')
+  })
+}
+
+async function onSend(text, attachments, sidebarFileContent = null) {
   error.value = ''
   messageListRef.value?.scrollToBottom(false)
   try {
-    const msg = buildUserTextMessage(selectedAgentId.value, text, attachments)
+    let extraPayload = null
+    if (selectedAgentId.value === 'executor') {
+      let fileContent = null
+      if (sidebarFileContent != null && sidebarFileContent !== '') {
+        fileContent = sidebarFileContent
+      } else if (attachments?.length) {
+        const withRaw = attachments.filter((item) => item.raw)
+        if (withRaw.length > 1) {
+          error.value = '执行模块一次只支持一个文件正文（侧栏或附件二选一）'
+          return
+        }
+        if (withRaw.length === 1) {
+          fileContent = await readAttachmentText(withRaw[0].raw)
+        }
+      }
+      if (fileContent != null) {
+        extraPayload = { file_content: fileContent }
+      }
+    }
+    const msg = buildUserTextMessage(selectedAgentId.value, text, attachments, extraPayload)
     const result = await sendMessageLocal(msg)
     upsertMessage(result.message)
+    if (sidebarFileContent) {
+      executorWorkspaceRef.value?.clearAttachedBody?.()
+    }
   } catch (e) {
     error.value = e.message
   }
@@ -189,7 +244,7 @@ function onWorkspaceError(msg) {
 }
 
 watch(selectedAgentId, (id) => {
-  if (mobileView.value === 'chat') markAgentRead(id)
+  if (isViewingAgentChat()) markAgentRead(id)
 })
 
 watch(selectedAgentId, (id) => {
@@ -197,7 +252,7 @@ watch(selectedAgentId, (id) => {
     clearInterval(pollTimer)
     pollTimer = null
   }
-  if (id === 'env') {
+  if (id === 'env' || id === 'executor') {
     pollTimer = setInterval(refreshMessagesQuiet, 8000)
   }
 })
@@ -291,12 +346,30 @@ onUnmounted(() => {
         @error="onWorkspaceError"
       />
 
+      <ExecutorWorkspace
+        ref="executorWorkspaceRef"
+        v-else-if="selectedAgentId === 'executor'"
+        :messages="allMessages"
+        :loading="loading"
+        :agent="selectedAgent"
+        @send="onSend"
+        @responded="onResponded"
+        @error="onWorkspaceError"
+      />
+
       <LlmConfigWorkspace
         v-else-if="selectedAgentId === 'llm'"
         :messages="allMessages"
         :loading="loading"
         :agent="selectedAgent"
         :live="wsConnected"
+        @error="onWorkspaceError"
+      />
+
+      <TerminalWorkspace
+        v-else-if="selectedAgentId === 'terminal'"
+        :agent="selectedAgent"
+        :active="selectedAgentId === 'terminal'"
         @error="onWorkspaceError"
       />
 

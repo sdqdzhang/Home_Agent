@@ -11,6 +11,7 @@ from app.config import settings
 from app.crypto.rsa import ensure_server_keys
 from app.models.db import clear_messages, init_db
 from app.services.message_service import message_service
+from app.services.terminal_relay import terminal_relay
 from app.services.ws_manager import ws_manager
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,13 @@ def health() -> dict[str, str]:
 
 @app.websocket("/ws/{target}")
 async def websocket_endpoint(websocket: WebSocket, target: str) -> None:
+    if target == "terminal":
+        await terminal_relay.attach_ui(websocket, enabled=settings.terminal_enabled)
+        return
+    if target == "terminal_agent":
+        await terminal_relay.attach_agent(websocket)
+        return
+
     await ws_manager.connect(target, websocket)
     try:
         await websocket.send_text(

@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="LA_", env_file=".env", extra="ignore")
 
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 8770
     base_dir: Path = Path(__file__).resolve().parent.parent
     data_dir: Path = base_dir / "data"

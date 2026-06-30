@@ -1,4 +1,4 @@
-import { WS_TARGET } from '../config/agents.js'
+import { USER_SENDER, WS_TARGET } from '../config/agents.js'
 
 export async function fetchModules() {
   const res = await fetch('/api/v1/modules')
@@ -12,13 +12,33 @@ export async function fetchHealth() {
   return res.json()
 }
 
+export async function fetchTerminalStatus() {
+  const res = await fetch('/api/v1/terminal/status')
+  if (!res.ok) throw new Error(`加载终端状态失败: ${res.status}`)
+  return res.json()
+}
+
 export async function fetchMessages({ target = WS_TARGET, name = null, limit = 200 } = {}) {
-  const params = new URLSearchParams({ target, limit: String(limit) })
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (target) params.set('target', target)
   if (name) params.set('name', name)
   const res = await fetch(`/api/v1/messages?${params}`)
   if (!res.ok) throw new Error(`加载消息失败: ${res.status}`)
   const data = await res.json()
   return data.messages || []
+}
+
+/** 加载双向聊天记录：模块回复 + 用户发出 */
+export async function fetchChatMessages(limit = 300) {
+  const [inbound, outbound] = await Promise.all([
+    fetchMessages({ target: WS_TARGET, limit }),
+    fetchMessages({ name: USER_SENDER, limit }),
+  ])
+  const byId = new Map()
+  for (const msg of [...inbound, ...outbound]) {
+    if (msg?.id) byId.set(msg.id, msg)
+  }
+  return [...byId.values()]
 }
 
 export async function sendMessageLocal(msg) {
@@ -69,4 +89,4 @@ export function connectWebSocket(target, handlers) {
   return ws
 }
 
-export { WS_TARGET }
+export { USER_SENDER, WS_TARGET }

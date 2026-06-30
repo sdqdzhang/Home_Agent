@@ -12,3 +12,4 @@ dd
 curl
 wget
 Invoke-WebRequest
+executor:file.write

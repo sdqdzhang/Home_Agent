@@ -8,8 +8,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from shared.server_center.client import ServerCenterClient
-from modules.security import MODULE_ALIASES, MODULE_NAME, YELLOW_LOG_MSG_TYPE
+from modules.security import MODULE_ALIASES, MODULE_NAME, SECURITY_LISTS_ACTIONS, YELLOW_LOG_MSG_TYPE
 from modules.security.config import security_settings
+from modules.security.lists_config import SecurityListsConfig
 from modules.security.model import SecurityAssistant, SecurityAutoApprover, SecurityJudge
 from modules.security.rules import evaluate_rules, reload_lists
 from modules.security.schemas import CheckRequest, CheckResult, RiskLevel
@@ -35,6 +36,7 @@ class SecurityService:
         self.judge = SecurityJudge()
         self.auto_approver = SecurityAutoApprover()
         self.assistant = SecurityAssistant()
+        self.lists_config = SecurityListsConfig()
         self._pending: dict[str, _PendingApproval] = {}
         self._lock = asyncio.Lock()
 
@@ -286,6 +288,10 @@ class SecurityService:
                     risk_source=str(payload.get("risk_source") or "rule"),
                     rule_reason=str(payload.get("rule_reason") or payload.get("reason") or ""),
                 )
+            return
+
+        if action in SECURITY_LISTS_ACTIONS:
+            await self.lists_config.handle(self.server, action, payload)
             return
 
         text = message.get("text", "").strip()

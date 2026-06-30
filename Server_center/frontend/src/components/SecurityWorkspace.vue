@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { respondMessage, sendMessageLocal } from '../api/client.js'
 import ChatInput from './ChatInput.vue'
 import MessageItem from './MessageItem.vue'
+import SecurityListsPanel from './SecurityListsPanel.vue'
 import {
   buildSecurityAutoApproveAllMessage,
   securityApprovalHistory,
@@ -26,6 +27,7 @@ const autoProcessing = ref(false)
 const selectedApprovalId = ref(null)
 const reason = ref('')
 const submitting = ref(false)
+const showListsPanel = ref(false)
 
 const pendingList = computed(() => securityPendingApprovals(props.messages, props.agent))
 const yellowLogs = computed(() => securityYellowLogs(props.messages, props.agent))
@@ -111,7 +113,24 @@ async function onSend(text) {
 </script>
 
 <template>
-  <div class="flex min-h-0 flex-1 flex-col">
+  <div class="relative flex min-h-0 flex-1 flex-col">
+    <div class="flex shrink-0 items-center justify-end border-b border-surface-border px-3 py-2">
+      <button
+        type="button"
+        class="rounded-lg border border-surface-border bg-surface-elevated/60 px-3 py-1.5 text-xs text-slate-300 transition hover:border-indigo-500/40 hover:text-indigo-200"
+        @click="showListsPanel = !showListsPanel"
+      >
+        {{ showListsPanel ? '收起规则配置' : '规则配置' }}
+      </button>
+    </div>
+
+    <SecurityListsPanel
+      :open="showListsPanel"
+      :messages="messages"
+      @close="showListsPanel = false"
+      @error="(msg) => emit('error', msg)"
+    />
+
     <div class="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-hidden p-3 lg:grid-cols-2">
       <!-- 左：待审批 + 黄色记录 -->
       <div class="flex min-h-0 flex-col gap-3">

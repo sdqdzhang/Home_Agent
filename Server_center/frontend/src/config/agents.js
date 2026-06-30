@@ -45,7 +45,7 @@ export const AGENTS = [
     defaultMood: '警惕',
     icon: '⛨',
     description: '危险操作审批与安全策略校验',
-    defaultMsgTypes: ['approval_request', 'security_yellow_log', 'text'],
+    defaultMsgTypes: ['approval_request', 'security_yellow_log', 'security_lists_result', 'text'],
   },
   {
     id: 'env',
@@ -89,7 +89,7 @@ export const AGENTS = [
     names: ['执行模块', 'executor', 'execution'],
     defaultMood: '执行中',
     icon: '▶',
-    description: '命令与任务执行过程日志（未开发）',
+    description: '命令与任务执行过程日志',
     defaultMsgTypes: ['execution_log'],
   },
   {
@@ -109,6 +109,15 @@ export const AGENTS = [
     icon: '⎇',
     description: 'Local Agent LLM 端点与槽位绑定',
     defaultMsgTypes: ['llm_config_result'],
+  },
+  {
+    id: 'terminal',
+    label: '远程终端',
+    names: ['远程终端', 'terminal'],
+    defaultMood: '在线',
+    icon: '▤',
+    description: '网页 cmd，直连本机 Shell（不经安全检查）',
+    defaultMsgTypes: [],
   },
 ]
 

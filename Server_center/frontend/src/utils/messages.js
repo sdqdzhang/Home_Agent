@@ -35,6 +35,9 @@ export function messageSummary(msg) {
   if (msg.msg_type === 'llm_config_result') {
     return msg.message?.ok ? '模型配置已更新' : '模型配置失败'
   }
+  if (msg.msg_type === 'security_lists_result') {
+    return msg.message?.ok ? '安全规则已更新' : '安全规则配置失败'
+  }
   if (msg.msg_type === 'plan_result') return msg.message?.goal || msg.message?.summary || '任务规划'
   if (msg.msg_type === 'reflection_note') return msg.message?.issue || '自省记录'
   if (msg.msg_type === 'memory_record') return msg.message?.key || '记忆写入'
@@ -43,7 +46,7 @@ export function messageSummary(msg) {
 
 /** @param {UiMessage} msg */
 export function countsAsUnread(msg) {
-  return msg.msg_type !== 'system_status' && msg.msg_type !== 'persona_state' && msg.msg_type !== 'llm_config_result'
+  return msg.msg_type !== 'system_status' && msg.msg_type !== 'persona_state' && msg.msg_type !== 'llm_config_result' && msg.msg_type !== 'security_lists_result'
 }
 
 /** @param {UiMessage[]} messages @param {{ id: string }} agent */
@@ -181,10 +184,61 @@ export function makeUserMessageId() {
   return `user_ui_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 }
 
-/** @param {string} targetAgentId */
-export function buildUserTextMessage(targetAgentId, text, attachments = []) {
+/** @param {UiMessage[]} messages @param {{ id: string, names: string[] }} agent */
+export function findRunningExecutorJob(messages, agent) {
+  const logs = messages
+    .filter(
+      (m) =>
+        belongsToAgent(m, agent) &&
+        m.msg_type === 'execution_log' &&
+        m.message?.status === 'running',
+    )
+    .sort((a, b) => b.timestamp - a.timestamp)
+  const latest = logs[0]
+  if (!latest) return null
+  return {
+    jobId: latest.message?.payload?.job_id || null,
+    msg: latest,
+  }
+}
+
+/** @param {string} targetAgentId @param {string | null} [jobId] */
+export function buildExecutorCancelMessage(targetAgentId, jobId = null) {
   const agent = findAgentByName(targetAgentId)
-  const target = agent?.names[0] || targetAgentId
+  const target = agent?.names[0] || '执行模块'
+  return {
+    id: makeUserMessageId(),
+    name: USER_SENDER,
+    target,
+    msg_type: 'text',
+    message: {
+      text: '终止当前执行',
+      role: 'user',
+      payload: {
+        action: 'cancel',
+        ...(jobId ? { job_id: jobId } : {}),
+      },
+    },
+    timestamp: Math.floor(Date.now() / 1000),
+  }
+}
+
+/** 执行频道主区：对话 + 执行日志 */
+/** @param {UiMessage[]} messages @param {{ id: string, names: string[] }} agent */
+export function executorWorkspaceMessages(messages, agent) {
+  return messages.filter(
+    (m) =>
+      belongsToAgent(m, agent) &&
+      (m.msg_type === 'text' || m.msg_type === 'execution_log'),
+  )
+}
+
+/** 执行频道：附带独立 file_content 字段的用户消息（路径仍由模型从 text 解析） */
+/** @param {string} targetAgentId @param {{ content: string, instruction: string }} opts */
+export function buildExecutorMessageWithBody(targetAgentId, { content, instruction }) {
+  const agent = findAgentByName(targetAgentId)
+  const target = agent?.names[0] || '执行模块'
+  const text = instruction?.trim() || '将侧栏正文写入指定文件'
   return {
     id: makeUserMessageId(),
     name: USER_SENDER,
@@ -193,7 +247,27 @@ export function buildUserTextMessage(targetAgentId, text, attachments = []) {
     message: {
       text,
       role: 'user',
-      ...(attachments.length ? { attachments } : {}),
+      payload: { file_content: content },
+    },
+    timestamp: Math.floor(Date.now() / 1000),
+  }
+}
+
+/** @param {string} targetAgentId @param {Record<string, unknown>} [extraPayload] */
+export function buildUserTextMessage(targetAgentId, text, attachments = [], extraPayload = null) {
+  const agent = findAgentByName(targetAgentId)
+  const target = agent?.names[0] || targetAgentId
+  const displayAttachments = attachments.map(({ name, size }) => ({ name, size }))
+  return {
+    id: makeUserMessageId(),
+    name: USER_SENDER,
+    target,
+    msg_type: 'text',
+    message: {
+      text,
+      role: 'user',
+      ...(displayAttachments.length ? { attachments: displayAttachments } : {}),
+      ...(extraPayload ? { payload: extraPayload } : {}),
     },
     timestamp: Math.floor(Date.now() / 1000),
   }

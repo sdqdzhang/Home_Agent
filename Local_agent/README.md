@@ -18,9 +18,13 @@ Local_agent/
 │   │   ├── service.py      # WebSocket 配置请求处理
 │   │   └── slots.py        # 槽位定义
 │   └── server_center/      # Server Center RSA 分块加密 + 消息发送（各模块复用）
+│   └── local_bus.py        # 新模块进程内互调门面
+├── docs/
+│   └── module-communication.md
 ├── modules/
 │   ├── crawler/            # 网页爬取模块
 │   ├── env/                # 环境感知模块（高频采集 / 低频汇报）
+│   ├── executor/           # 执行模块（动作 → 安检 → 执行）
 │   ├── memory/             # 记忆模块
 │   ├── planning/           # 规划模块（占位，未开发）
 │   ├── rag/                # RAG 检索增强（Chroma + 手动入库）
@@ -62,8 +66,9 @@ playwright install chromium   # 可选，用于动态页面
 
 cp .env.example .env
 # 编辑 .env：Server Center 地址、Ollama 模型等
+# 模块通信约定见 docs/module-communication.md
 
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8770
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8770
 ```
 
 确保 Server Center 已在 `8765` 运行，且 Ollama 已拉取对应模型。
@@ -98,6 +103,10 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8770
 | POST | `/rag/chat` | 带会话的 RAG 对话 |
 | GET | `/security/status` | 四列表、待审批与近期记录 |
 | POST | `/security/check` | 命令安全检查（可阻塞至审批结束） |
+| POST | `/executor/execute` | 提交明确动作执行 |
+| POST | `/executor/chat` | 执行模块对话（同 Web UI） |
+| GET | `/executor/jobs` | 执行任务列表 |
+| GET | `/executor/jobs/{id}/log` | 执行日志 |
 | POST | `/security/chat` | 安全模块对话 |
 
 ### 主 Agent 读取环境状态
@@ -158,11 +167,14 @@ curl -X POST http://127.0.0.1:8770/crawler/chat \
 
 详见 [规划模块文档](modules/planning/README.md)。
 
-### 执行（占位）
+### 执行
 
 - 模块名：`执行模块` / `executor` / `execution`
 - 上报类型：`execution_log`
-- **Local Agent 侧尚未实现**；Web UI 左侧已有「执行」频道
+- Web UI 左侧「执行」频道：自然语言明确动作 → LLM 解析 → 安全审查 → 执行
+- 模块间调用：`await call("executor", "execute", ExecuteRequest(...))`
+
+详见 [执行模块文档](modules/executor/README.md)；安全对接见 [INTEGRATION.md](modules/security/INTEGRATION.md)。
 
 ### 安全检查
 
@@ -243,6 +255,7 @@ curl -X POST http://127.0.0.1:8770/crawler/chat \
 | `security.judge` | security | chat | 黄色升红判定 |
 | `security.chat` | security | chat | 安全模块对话 |
 | `security.auto_approve` | security | chat | 模型自动审批 |
+| `executor.chat` | executor | chat | 明确动作 → JSON Action |
 
 主对话（jarvis）暂未接入。
 
@@ -289,6 +302,7 @@ vectors = embedder.embed(["文本"])
 | `SecurityJudge` | `security.judge` |
 | `SecurityAssistant` | `security.chat` |
 | `SecurityAutoApprover` | `security.auto_approve` |
+| `ExecutorAssistant` | `executor.chat` |
 
 **注册表 CRUD（Python）**
 

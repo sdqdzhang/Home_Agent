@@ -6,3 +6,5 @@ data/
 keys/
 *.log
 venv/
+
+workspace/

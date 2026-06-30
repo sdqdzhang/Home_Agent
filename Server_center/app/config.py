@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     static_dir: Path = base_dir / "app" / "static"
     db_path: Path = data_dir / "messages.db"
     rsa_key_size: int = 2048
+    terminal_enabled: bool = True
 
 
 settings = Settings()

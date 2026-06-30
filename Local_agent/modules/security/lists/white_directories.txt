@@ -1,5 +1,5 @@
 # 白目录：Agent 可自由读写的独立工作区（路径前缀匹配，支持正斜杠）
-data/agent_workspace/
-Local_agent/data/agent_workspace/
-Local_agent/data/crawler/artifacts/
-tmp/agent/
+
+
+# auto-added by executor on startup
+C:/Users/qd_zh/Desktop/项目/homeagent/Local_agent/workspace/
