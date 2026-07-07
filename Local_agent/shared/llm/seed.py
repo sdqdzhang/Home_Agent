@@ -200,11 +200,19 @@ def build_seed_data() -> tuple[list[EndpointRecord], list[BindingRecord]]:
             updated_at=now,
         ),
         BindingRecord(
-            slot_key="executor.chat",
+            slot_key="executor.parse",
             endpoint_id=ep_default.id,
             model_override=None,
             temperature_override=0.0,
             max_tokens_override=1024,
+            updated_at=now,
+        ),
+        BindingRecord(
+            slot_key="executor.codegen",
+            endpoint_id=ep_default.id,
+            model_override=None,
+            temperature_override=0.2,
+            max_tokens_override=8192,
             updated_at=now,
         ),
     ]
@@ -227,3 +235,40 @@ def seed_if_empty(store: LlmConfigStore) -> bool:
     endpoints, bindings = build_seed_data()
     store.replace_all(endpoints, bindings)
     return True
+
+
+def migrate_executor_slots(store: LlmConfigStore) -> None:
+    """合并执行解析槽位为 executor.parse，补齐 executor.codegen，清理旧槽位。"""
+    from modules.executor.llm_slots import EXECUTOR_CODEGEN_SLOT, EXECUTOR_PARSE_SLOT, LEGACY_EXECUTOR_PARSE_SLOTS
+
+    parse_binding = store.get_binding(EXECUTOR_PARSE_SLOT)
+    if not parse_binding:
+        source = None
+        for legacy_key in LEGACY_EXECUTOR_PARSE_SLOTS:
+            source = store.get_binding(legacy_key)
+            if source:
+                break
+        if not source:
+            source = store.get_binding("default.chat")
+        if source:
+            store.upsert_binding(
+                EXECUTOR_PARSE_SLOT,
+                source.endpoint_id,
+                model_override=source.model_override,
+                temperature_override=source.temperature_override or 0.0,
+                max_tokens_override=source.max_tokens_override or 1024,
+            )
+
+    if not store.get_binding(EXECUTOR_CODEGEN_SLOT):
+        source = store.get_binding(EXECUTOR_PARSE_SLOT) or store.get_binding("default.chat")
+        if source:
+            store.upsert_binding(
+                EXECUTOR_CODEGEN_SLOT,
+                source.endpoint_id,
+                model_override=source.model_override,
+                temperature_override=0.2,
+                max_tokens_override=8192,
+            )
+
+    for legacy_key in LEGACY_EXECUTOR_PARSE_SLOTS:
+        store.delete_binding(legacy_key)

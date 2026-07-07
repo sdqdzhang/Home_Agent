@@ -13,3 +13,4 @@ curl
 wget
 Invoke-WebRequest
 executor:file.write
+executor:file.delete

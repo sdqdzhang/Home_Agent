@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { AGENTS } from './config/agents.js'
+import { EXECUTOR_MODES } from './config/executorModes.js'
 import { connectWebSocket, fetchChatMessages, fetchHealth, sendMessageLocal, WS_TARGET } from './api/client.js'
 import AgentSidebar from './components/AgentSidebar.vue'
 import ChatHeader from './components/ChatHeader.vue'
@@ -175,33 +176,42 @@ async function readAttachmentText(file) {
   })
 }
 
-async function onSend(text, attachments, sidebarFileContent = null) {
+async function onSend(text, attachments, executorOpts = null) {
   error.value = ''
   messageListRef.value?.scrollToBottom(false)
   try {
     let extraPayload = null
     if (selectedAgentId.value === 'executor') {
+      const opts =
+        executorOpts && typeof executorOpts === 'object' && !Array.isArray(executorOpts)
+          ? executorOpts
+          : { fileContent: executorOpts }
+      const mode = EXECUTOR_MODES.some((m) => m.id === opts.mode) ? opts.mode : 'command'
+      extraPayload = { mode }
+
       let fileContent = null
-      if (sidebarFileContent != null && sidebarFileContent !== '') {
-        fileContent = sidebarFileContent
-      } else if (attachments?.length) {
-        const withRaw = attachments.filter((item) => item.raw)
-        if (withRaw.length > 1) {
-          error.value = '执行模块一次只支持一个文件正文（侧栏或附件二选一）'
-          return
+      if (mode === 'write_file') {
+        if (opts.fileContent != null && opts.fileContent !== '') {
+          fileContent = opts.fileContent
+        } else if (attachments?.length) {
+          const withRaw = attachments.filter((item) => item.raw)
+          if (withRaw.length > 1) {
+            error.value = '执行模块一次只支持一个文件正文（侧栏或附件二选一）'
+            return
+          }
+          if (withRaw.length === 1) {
+            fileContent = await readAttachmentText(withRaw[0].raw)
+          }
         }
-        if (withRaw.length === 1) {
-          fileContent = await readAttachmentText(withRaw[0].raw)
+        if (fileContent != null) {
+          extraPayload.file_content = fileContent
         }
-      }
-      if (fileContent != null) {
-        extraPayload = { file_content: fileContent }
       }
     }
     const msg = buildUserTextMessage(selectedAgentId.value, text, attachments, extraPayload)
     const result = await sendMessageLocal(msg)
     upsertMessage(result.message)
-    if (sidebarFileContent) {
+    if (executorOpts?.fileContent) {
       executorWorkspaceRef.value?.clearAttachedBody?.()
     }
   } catch (e) {

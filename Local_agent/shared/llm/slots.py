@@ -118,11 +118,18 @@ SLOT_DEFINITIONS: tuple[SlotDefinition, ...] = (
         description="记忆归档 embedding 模型",
     ),
     SlotDefinition(
-        slot_key="executor.chat",
-        label="执行动作解析",
+        slot_key="executor.parse",
+        label="执行-动作解析",
         module="executor",
         capability="chat",
-        description="将明确自然语言动作解析为 shell.run / file.read / file.write JSON",
+        description="命令执行与文件操作子能力的自然语言 → JSON 解析（共用）",
+    ),
+    SlotDefinition(
+        slot_key="executor.codegen",
+        label="执行-代码生成",
+        module="executor",
+        capability="chat",
+        description="根据详细规格生成完整代码（仅代码输出）",
     ),
 )
 

@@ -31,6 +31,7 @@ class JobStore:
                 CREATE TABLE IF NOT EXISTS jobs (
                     id TEXT PRIMARY KEY,
                     action_text TEXT NOT NULL,
+                    mode TEXT NOT NULL DEFAULT 'command',
                     action_type TEXT,
                     status TEXT NOT NULL,
                     summary TEXT,
@@ -43,12 +44,16 @@ class JobStore:
                 );
                 """
             )
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(jobs)")}
+            if "mode" not in columns:
+                conn.execute("ALTER TABLE jobs ADD COLUMN mode TEXT NOT NULL DEFAULT 'command'")
 
     def create_job(
         self,
         job_id: str,
         *,
         action_text: str,
+        mode: str = "command",
         caller_module: str = "",
         caller_request_id: str = "",
         purpose: str = "",
@@ -58,11 +63,11 @@ class JobStore:
             conn.execute(
                 """
                 INSERT INTO jobs (
-                    id, action_text, status, caller_module, caller_request_id,
+                    id, action_text, mode, status, caller_module, caller_request_id,
                     purpose, created_at, updated_at
-                ) VALUES (?, ?, 'pending', ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?)
                 """,
-                (job_id, action_text, caller_module, caller_request_id, purpose, now, now),
+                (job_id, action_text, mode, caller_module, caller_request_id, purpose, now, now),
             )
 
     def update_job(
@@ -112,7 +117,7 @@ class JobStore:
     def list_jobs(self, limit: int = 50) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT id, action_text, action_type, status, summary, caller_module, created_at, updated_at "
+                "SELECT id, action_text, mode, action_type, status, summary, caller_module, created_at, updated_at "
                 "FROM jobs ORDER BY created_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()

@@ -255,7 +255,8 @@ curl -X POST http://127.0.0.1:8770/crawler/chat \
 | `security.judge` | security | chat | 黄色升红判定 |
 | `security.chat` | security | chat | 安全模块对话 |
 | `security.auto_approve` | security | chat | 模型自动审批 |
-| `executor.chat` | executor | chat | 明确动作 → JSON Action |
+| `executor.parse` | executor | chat | 命令与文件操作 → JSON 解析（共用） |
+| `executor.codegen` | executor | chat | 详细规格 → 完整代码 |
 
 主对话（jarvis）暂未接入。
 
@@ -302,7 +303,8 @@ vectors = embedder.embed(["文本"])
 | `SecurityJudge` | `security.judge` |
 | `SecurityAssistant` | `security.chat` |
 | `SecurityAutoApprover` | `security.auto_approve` |
-| `ExecutorAssistant` | `executor.chat` |
+| `CommandAssistant` / 文件子能力 | `executor.parse` |
+| `CodegenAssistant` | `executor.codegen` |
 
 **注册表 CRUD（Python）**
 

@@ -184,14 +184,15 @@ export function makeUserMessageId() {
   return `user_ui_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 }
 
-/** @param {UiMessage[]} messages @param {{ id: string, names: string[] }} agent */
-export function findRunningExecutorJob(messages, agent) {
+/** @param {UiMessage[]} messages @param {{ id: string, names: string[] }} agent @param {'command'|'codegen'} [mode] */
+export function findRunningExecutorJob(messages, agent, mode = 'command') {
   const logs = messages
     .filter(
       (m) =>
         belongsToAgent(m, agent) &&
         m.msg_type === 'execution_log' &&
-        m.message?.status === 'running',
+        m.message?.status === 'running' &&
+        executorMessageMode(m) === mode,
     )
     .sort((a, b) => b.timestamp - a.timestamp)
   const latest = logs[0]
@@ -223,14 +224,67 @@ export function buildExecutorCancelMessage(targetAgentId, jobId = null) {
   }
 }
 
-/** 执行频道主区：对话 + 执行日志 */
-/** @param {UiMessage[]} messages @param {{ id: string, names: string[] }} agent */
-export function executorWorkspaceMessages(messages, agent) {
-  return messages.filter(
+const KNOWN_EXECUTOR_MODES = new Set([
+  'command',
+  'codegen',
+  'read_file',
+  'write_file',
+  'delete_file',
+  'browse_dir',
+  'search_file',
+  'search_content',
+])
+
+const ACTION_TYPE_TO_MODE = {
+  'shell.run': 'command',
+  'code.generate': 'codegen',
+  'file.read': 'read_file',
+  'file.write': 'write_file',
+  'file.delete': 'delete_file',
+  'dir.browse': 'browse_dir',
+  'file.search': 'search_file',
+  'content.search': 'search_content',
+}
+
+/** 执行模块子能力：从消息 payload 推断 mode（默认 command） */
+/** @param {UiMessage} msg */
+export function executorMessageMode(msg) {
+  const payload = msg.message?.payload
+  if (payload?.mode && KNOWN_EXECUTOR_MODES.has(payload.mode)) {
+    return payload.mode
+  }
+  if (msg.msg_type === 'execution_log') {
+    if (payload?.mode && KNOWN_EXECUTOR_MODES.has(payload.mode)) return payload.mode
+    const actionType = payload?.result?.action_type || payload?.action_type
+    if (actionType && ACTION_TYPE_TO_MODE[actionType]) {
+      return ACTION_TYPE_TO_MODE[actionType]
+    }
+    return 'command'
+  }
+  return 'command'
+}
+
+/** @param {UiMessage} msg @param {Map<string, UiMessage>} byId */
+function resolveExecutorMessageMode(msg, byId) {
+  const direct = executorMessageMode(msg)
+  if (msg.message?.payload?.mode) return direct
+  const replyTo = msg.message?.reply_to
+  if (replyTo && byId.has(replyTo)) {
+    return executorMessageMode(byId.get(replyTo))
+  }
+  return direct
+}
+
+/** 执行频道主区：按子能力过滤对话与执行日志 */
+/** @param {UiMessage[]} messages @param {{ id: string, names: string[] }} agent @param {'command'|'codegen'} [mode] */
+export function executorWorkspaceMessages(messages, agent, mode = 'command') {
+  const base = messages.filter(
     (m) =>
       belongsToAgent(m, agent) &&
       (m.msg_type === 'text' || m.msg_type === 'execution_log'),
   )
+  const byId = new Map(base.map((m) => [m.id, m]))
+  return base.filter((m) => resolveExecutorMessageMode(m, byId) === mode)
 }
 
 /** 执行频道：附带独立 file_content 字段的用户消息（路径仍由模型从 text 解析） */
@@ -247,7 +301,7 @@ export function buildExecutorMessageWithBody(targetAgentId, { content, instructi
     message: {
       text,
       role: 'user',
-      payload: { file_content: content },
+      payload: { file_content: content, mode: 'write_file' },
     },
     timestamp: Math.floor(Date.now() / 1000),
   }
