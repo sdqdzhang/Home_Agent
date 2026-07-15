@@ -30,11 +30,13 @@ class SecuredCapability:
         run_action: RunActionFn,
         validate_action: Callable[[Any], str | None] | None = None,
         prepare_action: Callable[[Any, ExecuteRequest, dict[str, Any]], tuple[Any, str | None]] | None = None,
+        mode: str = "",
     ) -> None:
         self.assistant = assistant
         self._run_action = run_action
         self._validate_action = validate_action
         self._prepare_action = prepare_action
+        self.mode = mode
 
     async def run(
         self,

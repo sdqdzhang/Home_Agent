@@ -75,6 +75,7 @@ class JobStore:
         job_id: str,
         *,
         status: str | None = None,
+        mode: str | None = None,
         action_type: str | None = None,
         summary: str | None = None,
         result_json: dict[str, Any] | None = None,
@@ -84,6 +85,9 @@ class JobStore:
         if status is not None:
             fields.append("status = ?")
             values.append(status)
+        if mode is not None:
+            fields.append("mode = ?")
+            values.append(mode)
         if action_type is not None:
             fields.append("action_type = ?")
             values.append(action_type)

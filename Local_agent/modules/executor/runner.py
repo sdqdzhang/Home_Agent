@@ -28,10 +28,14 @@ class RunOutput:
     files_touched: list[str] = field(default_factory=list)
 
 
-def security_command_for_action(action: Any) -> str:
-    from modules.executor.security_map import security_command_for_action as _map
-
-    return _map(action)
+def decode_subprocess_output(data: bytes) -> str:
+    """解码子进程输出：优先 UTF-8，失败再回退 GBK（中文 Windows 控制台常见）。"""
+    if not data:
+        return ""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("gbk", errors="replace")
 
 
 def resolve_cwd(cwd: str | None) -> Path:
@@ -176,8 +180,8 @@ async def run_shell(
             run_ctx=run_ctx,
         )
 
-    stdout = stdout_b.decode("utf-8", errors="replace")
-    stderr = stderr_b.decode("utf-8", errors="replace")
+    stdout = decode_subprocess_output(stdout_b)
+    stderr = decode_subprocess_output(stderr_b)
     duration_ms = int((time.perf_counter() - started) * 1000)
 
     if on_line:

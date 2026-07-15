@@ -17,10 +17,13 @@ ExecutorMode = Literal[
 
 
 class ExecuteRequest(BaseModel):
-    """入口：明确的自然语言动作、文件操作或代码生成规格。"""
+    """入口：明确的自然语言动作、文件操作或代码生成规格。
+
+    mode 缺省（None）时由执行模块 LLM 自动路由到子能力；显式传入则强制使用该 mode。
+    """
 
     action_text: str = Field(..., min_length=1)
-    mode: ExecutorMode = "command"
+    mode: ExecutorMode | None = None
     caller_module: str = "unknown"
     caller_request_id: str = ""
     purpose: str = ""

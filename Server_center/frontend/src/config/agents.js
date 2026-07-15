@@ -89,7 +89,7 @@ export const AGENTS = [
     names: ['执行模块', 'executor', 'execution'],
     defaultMood: '执行中',
     icon: '▶',
-    description: '命令执行、代码生成等子能力',
+    description: '自然语言自动路由：命令 / 文件操作 / 代码生成',
     defaultMsgTypes: ['execution_log'],
   },
   {

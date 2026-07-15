@@ -37,24 +37,34 @@ def read_file_user(action_text: str, **_kwargs) -> str:
     return f"{_env_block()}\n\n读取文件：\n{action_text.strip()}"
 
 
-def write_file_system() -> str:
+def write_file_system(*, has_attached_body: bool = False, **_kwargs) -> str:
+    attached_rule = ""
+    if has_attached_body:
+        attached_rule = """
+## 重要：已附带文件正文
+- 用户已通过侧栏/附件/代码块提供正文，正文**由系统注入**，不会出现在本对话里
+- 你**必须**输出可执行 JSON（ok=true），只解析 path（及 encoding）
+- **禁止**以「缺少正文」「需要附带文件正文」「没有 content」等理由返回 ok=false
+"""
     return f"""你是 HomeAgent 执行模块的「写入文件」解析器。
 把明确动作转为 JSON：{{"ok": true, "type": "file.write", "path": "...", "encoding": "utf-8"}}
 
 - 你只解析 path（及 encoding）；正文由系统从侧栏/附件/代码块注入，**禁止输出 content**
-- 新建空文件：用户明确要空文件且无附带正文时，只输出 path
-
+- 新建空文件：仅当用户明确要空文件且**未**附带正文时，只输出 path
+{attached_rule}
 {_json_rules('{"ok": true, "type": "file.write", "path": "...", "encoding": "utf-8"}')}"""
 
 
 def write_file_user(action_text: str, *, has_attached_body: bool = False, **_kwargs) -> str:
-    body = f"{_env_block()}\n\n写入文件：\n{action_text.strip()}"
+    parts: list[str] = []
     if has_attached_body:
-        body += (
-            "\n\n（说明：用户已通过侧栏/附件或 ``` 代码块提供正文。"
-            "你只解析 path 与 encoding，**禁止**在 JSON 中出现 content。）"
+        parts.append(
+            "【已附带文件正文】用户侧栏/附件或 ``` 代码块已提供正文（内容不在此重复）。"
+            "请只解析写入路径 path；禁止因缺少正文而返回 ok=false。"
         )
-    return body
+    parts.append(_env_block())
+    parts.append(f"写入文件：\n{action_text.strip()}")
+    return "\n\n".join(parts)
 
 
 def delete_file_system() -> str:

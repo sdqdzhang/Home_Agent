@@ -1,5 +1,6 @@
 """执行模块 LLM 槽位键名。"""
 
+EXECUTOR_ROUTE_SLOT = "executor.route"
 EXECUTOR_PARSE_SLOT = "executor.parse"
 EXECUTOR_CODEGEN_SLOT = "executor.codegen"
 

@@ -9,8 +9,10 @@ from typing import Any
 from shared.server_center.client import ServerCenterClient
 from modules.executor import DEFAULT_MSG_TYPE, MODULE_ALIASES, MODULE_NAME
 from modules.executor.capabilities import CAPABILITIES, EXECUTOR_MODES
+from modules.executor.capabilities.common import finish_not_executable
 from modules.executor.config import executor_settings, ensure_default_cwd_whitelisted
 from modules.executor.logging import JobLogger
+from modules.executor.mode_router import ModeRouter, has_file_attachment, route_instruction_text
 from modules.executor.schemas import ExecuteRequest, ExecuteResult, ExecutorMode
 from modules.executor.storage import JobStore
 
@@ -34,6 +36,7 @@ class ExecutorService:
 
         self.store = JobStore(executor_settings.db_path)
         self.capabilities = dict(CAPABILITIES)
+        self.mode_router = ModeRouter()
         self.server = server_client
         self._active: dict[str, dict[str, Any]] = {}
 
@@ -64,7 +67,7 @@ class ExecutorService:
         if isinstance(request, dict):
             request = ExecuteRequest.model_validate(request)
 
-        if request.mode not in EXECUTOR_MODES:
+        if request.mode is not None and request.mode not in EXECUTOR_MODES:
             return ExecuteResult.not_executable(f"未知执行模式: {request.mode!r}")
 
         job_id = f"exec_{int(time.time())}_{uuid.uuid4().hex[:8]}"
@@ -76,6 +79,44 @@ class ExecutorService:
         finally:
             self._unregister_run(job_id)
 
+    async def _resolve_mode(
+        self,
+        request: ExecuteRequest,
+        job_id: str,
+        run_ctx: dict[str, Any],
+        job_log: JobLogger,
+    ) -> tuple[ExecutorMode | None, ExecuteResult | None]:
+        """返回 (mode, early_result)。early_result 非空表示应直接结束。"""
+        if request.mode is not None:
+            return request.mode, None
+
+        instruction, has_fenced = route_instruction_text(request.action_text)
+        attached = has_file_attachment(request.file_content)
+        await self._push_log(
+            f"路由中: {instruction[:80]}",
+            status="running",
+            log=job_log.lines,
+            payload={"job_id": job_id, "phase": "route"},
+        )
+        if run_ctx.get("cancelled"):
+            from modules.executor.capabilities.common import finish_cancelled
+
+            return None, await finish_cancelled(
+                self.store, self._push_log, job_id, job_log, request
+            )
+
+        mode, route_error = await self.mode_router.route(
+            instruction,
+            has_file_attachment=attached,
+            has_fenced_body=has_fenced,
+        )
+        if mode is None:
+            return None, await finish_not_executable(
+                self.store, self._push_log, job_id, job_log, request, route_error
+            )
+        job_log.info(f"routed mode: {mode}")
+        return mode, None
+
     async def _execute_job(
         self,
         request: ExecuteRequest,
@@ -83,19 +124,43 @@ class ExecutorService:
         run_ctx: dict[str, Any],
         job_log: JobLogger,
     ) -> ExecuteResult:
-        capability = self.capabilities.get(request.mode)
-        if capability is None:
-            return ExecuteResult.not_executable(f"未注册的执行模式: {request.mode}")
-
         self.store.create_job(
             job_id,
             action_text=request.action_text,
-            mode=request.mode,
+            mode=request.mode or "auto",
             caller_module=request.caller_module,
             caller_request_id=request.caller_request_id,
             purpose=request.purpose,
         )
         self.store.update_job(job_id, status="running")
+
+        mode, early = await self._resolve_mode(request, job_id, run_ctx, job_log)
+        if early is not None:
+            return early
+        assert mode is not None
+
+        if has_file_attachment(request.file_content) and mode != "write_file":
+            reason = (
+                f"已附带文件正文，但判定的操作为 {mode!r} 而非 write_file；"
+                "有附件时只能执行写入文件"
+            )
+            return await finish_not_executable(
+                self.store, self._push_log, job_id, job_log, request, reason
+            )
+
+        capability = self.capabilities.get(mode)
+        if capability is None:
+            return await finish_not_executable(
+                self.store,
+                self._push_log,
+                job_id,
+                job_log,
+                request,
+                f"未注册的执行模式: {mode}",
+            )
+
+        self.store.update_job(job_id, mode=mode)
+        request = request.model_copy(update={"mode": mode})
 
         return await capability.run(
             request,
@@ -113,7 +178,7 @@ class ExecutorService:
         session_id: str = "default",
         reply_to_id: str | None = None,
         file_content: str | None = None,
-        mode: ExecutorMode = "command",
+        mode: ExecutorMode | None = None,
     ) -> str:
         result = await self.execute(
             ExecuteRequest(
@@ -126,6 +191,23 @@ class ExecutorService:
             )
         )
         reply = self._format_result_reply(result)
+        reply_payload: dict[str, Any] = {}
+        if mode:
+            reply_payload["mode"] = mode
+        elif result.action_type:
+            action_to_mode = {
+                "shell.run": "command",
+                "code.generate": "codegen",
+                "file.read": "read_file",
+                "file.write": "write_file",
+                "file.delete": "delete_file",
+                "dir.browse": "browse_dir",
+                "file.search": "search_file",
+                "content.search": "search_content",
+            }
+            resolved = action_to_mode.get(result.action_type)
+            if resolved:
+                reply_payload["mode"] = resolved
         if self.server:
             await self.server.send_message(
                 msg_type="text",
@@ -133,7 +215,7 @@ class ExecutorService:
                     "text": reply,
                     "role": "agent",
                     "reply_to": reply_to_id,
-                    "payload": {"mode": mode},
+                    **({"payload": reply_payload} if reply_payload else {}),
                 },
             )
         return reply
@@ -191,9 +273,14 @@ class ExecutorService:
         if file_content is not None:
             file_content = str(file_content)
 
-        mode = str(payload.get("mode") or "command")
-        if mode not in EXECUTOR_MODES:
-            mode = "command"
+        raw_mode = payload.get("mode")
+        mode: ExecutorMode | None = None
+        if raw_mode is not None and str(raw_mode).strip():
+            candidate = str(raw_mode).strip()
+            if candidate in EXECUTOR_MODES:
+                mode = candidate  # type: ignore[assignment]
+            else:
+                mode = None
 
         session_id = message.get("session_id") or "default"
         asyncio.create_task(
@@ -213,7 +300,7 @@ class ExecutorService:
         session_id: str,
         reply_to_id: str,
         file_content: str | None,
-        mode: str,
+        mode: ExecutorMode | None,
     ) -> None:
         """后台执行，避免阻塞 WebSocket 以便随时处理 cancel。"""
         try:

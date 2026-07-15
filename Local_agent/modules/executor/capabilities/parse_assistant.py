@@ -61,8 +61,12 @@ class JsonParseAssistant:
         self._post_validate = post_validate
 
     async def parse_action(self, action_text: str, **kwargs: Any) -> tuple[Any | None, str]:
+        try:
+            system = self._render_system(**kwargs)
+        except TypeError:
+            system = self._render_system()
         messages = [
-            {"role": "system", "content": self._render_system()},
+            {"role": "system", "content": system},
             {"role": "user", "content": self._render_user(action_text, **kwargs)},
         ]
         try:

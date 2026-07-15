@@ -6,40 +6,52 @@ HomeAgent **行动层**：将明确动作或代码生成规格落地处理，不
 
 | 负责 | 不负责 |
 |------|--------|
-| 按 `mode` 路由到子能力并返回事实 | 理解模糊需求、规划、推断下一步 |
+| 自然语言自动路由到子能力并返回事实 | 理解模糊需求、规划、推断下一步 |
 | 命令执行：解析 → 安检 → shell/文件 IO | 补全参数、修改目标、自动重试 |
 | 代码生成：详细规格 → 完整代码 | 执行或写入生成的代码 |
 
-动作无法唯一执行 → 返回 `not_executable`。
+动作无法唯一确定 → 返回 `not_executable`。
+
+## 入口
+
+`ExecuteRequest`：
+
+- **只需** `action_text`（自然语言）；`mode` **可选**
+- `mode` 缺省：LLM 先路由到子能力，再走该子能力原有解析/执行链（两阶段）
+- `mode` 显式传入：跳过路由，强制该子能力（调试用）
+- `file_content`：附件正文，**不送入**路由 LLM / 解析 LLM；有附件时必须路由到 `write_file`，否则 `not_executable`
 
 ## 子能力（`mode`）
 
 | mode | 说明 | 安检 | LLM 槽位 |
 |------|------|------|----------|
-| `command`（默认） | shell.run / file.read / file.write | 是 | `executor.command.parse` |
+| `command` | shell.run | 是 | `executor.parse` |
+| `read_file` / `write_file` / `delete_file` | 文件读写删 | 是 | `executor.parse` |
+| `browse_dir` / `search_file` / `search_content` | 目录浏览 / 搜文件 / 搜内容 | 是 | `executor.parse` |
 | `codegen` | 详细规格 → 纯代码输出（stdout） | 否 | `executor.codegen` |
 
-后续可继续添加子能力，统一走 `ExecuteRequest` / `ExecuteResult`。
+路由本身使用槽位 `executor.route`：专用文件/代码能力仅在意图明确时选用，**其余一律兜底到 `command`（Shell）**。
 
-### command — 命令执行
+### write_file — 附件
 
-与第一版相同：自然语言明确动作 → JSON Action → 校验 → 安检 → 执行。
+- 正文来源优先级：`file_content`（附件）→ Markdown 代码块 → LLM `content`
+- 附件正文不进 LLM；有附件时模型只解析目标路径
+- 有附件却未判定为 `write_file`（含用 shell 写文件）→ 错误
 
-**带正文的 `file.write`**：正文优先从 `file_content`（附件）→ Markdown 代码块 → LLM `content`。
+### codegen
 
-### codegen — 代码生成
-
-- 输入：`action_text` 为完整、详细的规格说明（含语言、接口、输入输出、边界条件等）
+- 输入：`action_text` 为完整、详细的规格说明
 - 输出：`ok=true`，`action_type=code.generate`，`stdout` 为纯代码
 - 不经 SecurityService，不执行、不写盘
+- 可被自动路由选中（也可用显式 `mode=codegen`）
 
 ## 核心流程
 
 ```
-ExecuteRequest(action_text, mode)
-  → 路由到 capabilities/{mode}
-  → command: LLM 解析 → 安检 → subprocess / 文件 IO
-  → codegen: LLM 生成代码 → stdout
+ExecuteRequest(action_text[, mode][, file_content])
+  → mode 缺省: executor.route → 确定 mode
+  → 有附件且 mode ≠ write_file → not_executable
+  → capabilities/{mode}: LLM 解析 →（多数）安检 → 执行 / 生成
   → ExecuteResult + execution_log + jobs.db
 ```
 
@@ -49,7 +61,7 @@ ExecuteRequest(action_text, mode)
 from shared.local_bus import call
 from modules.executor.schemas import ExecuteRequest
 
-# 命令执行（默认）
+# 自动路由（推荐）
 result = await call(
     "executor",
     "execute",
@@ -59,7 +71,7 @@ result = await call(
     ),
 )
 
-# 代码生成
+# 强制子能力（可选）
 result = await call(
     "executor",
     "execute",
@@ -69,7 +81,6 @@ result = await call(
         caller_module="planning",
     ),
 )
-code = result.stdout
 ```
 
 ## 本地 API（调试）
@@ -81,16 +92,15 @@ code = result.stdout
 | GET | `/executor/jobs` | 任务列表 |
 | GET | `/executor/jobs/{id}` | 任务详情 |
 
-Web UI payload 可传 `mode: "codegen"` 切换子能力。
-
 ## LLM 槽位
 
 | slot | 用途 |
 |------|------|
-| `executor.parse` | 命令执行 + 全部文件操作子能力的 JSON 解析（**共用**） |
+| `executor.route` | 自然语言 → 子能力 `mode` |
+| `executor.parse` | 命令 / 文件类 JSON 解析（共用） |
 | `executor.codegen` | 详细规格 → 完整代码 |
 
-旧槽位（`executor.chat`、`executor.command.parse`、`executor.*.parse` 等）启动时自动合并为 `executor.parse`。
+旧槽位（`executor.chat`、`executor.command.parse`、`executor.*.parse` 等）启动时自动合并为 `executor.parse`；缺省时补齐 `executor.route` / `executor.codegen`。
 
 ## 配置（`LA_EXECUTOR_`）
 
@@ -102,17 +112,19 @@ Web UI payload 可传 `mode: "codegen"` 切换子能力。
 
 ## 数据
 
-- `data/executor/jobs.db` — 任务记录（含 `mode`）
+- `data/executor/jobs.db` — 任务记录（含解析后的 `mode`）
 - `data/executor/logs/{job_id}.log` — 执行日志
 
 ## 目录结构
 
 ```
 modules/executor/
+  mode_router.py   # 子能力自动路由
   capabilities/
-    command/    # 命令执行子能力
-    codegen/    # 代码生成子能力
-  service.py    # 路由与 Web UI
-  schemas.py    # 统一入参/出参
-  runner.py     # shell / 文件 IO
+    command/       # 命令执行
+    files/         # 文件类子能力
+    codegen/       # 代码生成
+  service.py       # 路由与 Web UI
+  schemas.py       # 统一入参/出参
+  runner.py        # shell / 文件 IO
 ```

@@ -118,6 +118,13 @@ SLOT_DEFINITIONS: tuple[SlotDefinition, ...] = (
         description="记忆归档 embedding 模型",
     ),
     SlotDefinition(
+        slot_key="executor.route",
+        label="执行-子能力路由",
+        module="executor",
+        capability="chat",
+        description="自然语言 → 执行子能力 mode（command / 文件类 / codegen）",
+    ),
+    SlotDefinition(
         slot_key="executor.parse",
         label="执行-动作解析",
         module="executor",

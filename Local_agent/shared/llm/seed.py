@@ -200,6 +200,14 @@ def build_seed_data() -> tuple[list[EndpointRecord], list[BindingRecord]]:
             updated_at=now,
         ),
         BindingRecord(
+            slot_key="executor.route",
+            endpoint_id=ep_default.id,
+            model_override=None,
+            temperature_override=0.0,
+            max_tokens_override=256,
+            updated_at=now,
+        ),
+        BindingRecord(
             slot_key="executor.parse",
             endpoint_id=ep_default.id,
             model_override=None,
@@ -238,8 +246,13 @@ def seed_if_empty(store: LlmConfigStore) -> bool:
 
 
 def migrate_executor_slots(store: LlmConfigStore) -> None:
-    """合并执行解析槽位为 executor.parse，补齐 executor.codegen，清理旧槽位。"""
-    from modules.executor.llm_slots import EXECUTOR_CODEGEN_SLOT, EXECUTOR_PARSE_SLOT, LEGACY_EXECUTOR_PARSE_SLOTS
+    """合并执行解析槽位为 executor.parse，补齐 route/codegen，清理旧槽位。"""
+    from modules.executor.llm_slots import (
+        EXECUTOR_CODEGEN_SLOT,
+        EXECUTOR_PARSE_SLOT,
+        EXECUTOR_ROUTE_SLOT,
+        LEGACY_EXECUTOR_PARSE_SLOTS,
+    )
 
     parse_binding = store.get_binding(EXECUTOR_PARSE_SLOT)
     if not parse_binding:
@@ -257,6 +270,17 @@ def migrate_executor_slots(store: LlmConfigStore) -> None:
                 model_override=source.model_override,
                 temperature_override=source.temperature_override or 0.0,
                 max_tokens_override=source.max_tokens_override or 1024,
+            )
+
+    if not store.get_binding(EXECUTOR_ROUTE_SLOT):
+        source = store.get_binding(EXECUTOR_PARSE_SLOT) or store.get_binding("default.chat")
+        if source:
+            store.upsert_binding(
+                EXECUTOR_ROUTE_SLOT,
+                source.endpoint_id,
+                model_override=source.model_override,
+                temperature_override=0.0,
+                max_tokens_override=256,
             )
 
     if not store.get_binding(EXECUTOR_CODEGEN_SLOT):

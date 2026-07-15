@@ -2,62 +2,62 @@
 
 /** @typedef {'command'|'read_file'|'write_file'|'delete_file'|'browse_dir'|'search_file'|'search_content'|'codegen'} ExecutorModeId */
 
-/** @typedef {{ id: ExecutorModeId, label: string, hint: string, emptyHint: string, sidebar?: boolean }} ExecutorModeDef */
+/** @typedef {{ id: ExecutorModeId, label: string, hint: string }} ExecutorModeDef */
+
+/** 发送时不传 mode = 自动路由 */
+export const EXECUTOR_MODE_AUTO = 'auto'
 
 /** @type {ExecutorModeDef[]} */
 export const EXECUTOR_MODES = [
   {
     id: 'command',
     label: '命令执行',
-    hint: '用自然语言描述单一 shell 命令（不含读/写/删文件，那些请用专用 Tab）',
-    emptyHint: '例如「列出当前目录下的 .py 文件」或「运行 python -m pytest」',
+    hint: '单一 shell 命令',
   },
   {
     id: 'read_file',
     label: '读取文件',
-    hint: '读取指定文件内容，结果在回复中返回',
-    emptyHint: '例如「读取 README.md」或「读取 config.py」',
+    hint: '读取指定文件内容',
   },
   {
     id: 'write_file',
     label: '写入文件',
-    hint: '将内容写入文件（不存在则新建）；可在侧栏附上正文',
-    emptyHint: '例如「将侧栏内容写入 workspace/app.py」',
-    sidebar: true,
+    hint: '创建或覆盖写入文件',
   },
   {
     id: 'delete_file',
     label: '删除文件',
-    hint: '删除单个文件（黑命令，需安全审批）',
-    emptyHint: '例如「删除 tmp/old.log」',
+    hint: '删除单个文件（需安检）',
   },
   {
     id: 'browse_dir',
     label: '浏览目录',
-    hint: '以 tree 风格展示目录结构',
-    emptyHint: '例如「浏览整个项目结构」或「查看 src 目录」',
+    hint: '目录树结构',
   },
   {
     id: 'search_file',
     label: '搜索文件',
-    hint: '从指定目录递归按文件名搜索',
-    emptyHint: '例如「在项目中查找 docker-compose.yml」',
+    hint: '按文件名搜索',
   },
   {
     id: 'search_content',
     label: '搜索内容',
-    hint: '在指定文件中搜索文本，返回行号及上下 5 行上下文',
-    emptyHint: '例如「在 .env 中查找 JWT_SECRET 在哪里定义」',
+    hint: '文件内文本搜索',
   },
   {
     id: 'codegen',
     label: '代码生成',
-    hint: '输入完整规格说明，返回纯代码（不经安检）',
-    emptyHint: '例如「用 Python 实现 parse_csv(path: str) -> list[dict]，要求…」',
+    hint: '规格 → 纯代码（不经安检）',
   },
 ]
 
-/** @param {ExecutorModeId} id */
+/** @param {string} id */
 export function findExecutorMode(id) {
-  return EXECUTOR_MODES.find((m) => m.id === id) || EXECUTOR_MODES[0]
+  return EXECUTOR_MODES.find((m) => m.id === id) || null
+}
+
+/** @param {string | null | undefined} id */
+export function executorModeLabel(id) {
+  if (!id || id === EXECUTOR_MODE_AUTO) return '自动路由'
+  return findExecutorMode(id)?.label || id
 }

@@ -20,6 +20,7 @@ pip install -r requirements.txt
 | `test_env_gui.py` | 测试环境感知（含 Server 地址、测试连接、推送） | 推送需 Server Center 运行 |
 | `test_rag_gui.py` | RAG 入库（规则/语义分块）、问答、向量库浏览与删除 | 语义分块需 `qwen2.5:3b` |
 | `test_security_gui.py` | 安全检查：绿/红/黄命令、Server Center 审批 | Server Center + 黄色需 Ollama |
+| `test_executor_gui.py` | 执行模块：默认自动路由；**内嵌安检**（挂到 `app.main.security_service`） | Ollama（route/parse）；红灯审批需 Server Center |
 | `test_storage_gui.py` | **日志与记录清理**：查看/删除各模块 DB、日志、向量库、截图等 | 无（建议停止 Agent 后再清理） |
 
 ### 启动
@@ -31,6 +32,7 @@ python test/test_crawler_gui.py
 python test/test_env_gui.py
 python test/test_rag_gui.py
 python test/test_security_gui.py
+python test/test_executor_gui.py
 python test/test_storage_gui.py
 ```
 
@@ -41,6 +43,7 @@ Windows 也可双击：
 - `test/run_env.bat`
 - `test/run_rag.bat`
 - `test/run_security_gui.bat`
+- `test/run_executor_gui.bat`
 - `test/run_storage_gui.bat`
 
 ## 爬取：使用模型 vs 不使用模型

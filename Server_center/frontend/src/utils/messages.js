@@ -184,15 +184,14 @@ export function makeUserMessageId() {
   return `user_ui_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 }
 
-/** @param {UiMessage[]} messages @param {{ id: string, names: string[] }} agent @param {'command'|'codegen'} [mode] */
-export function findRunningExecutorJob(messages, agent, mode = 'command') {
+/** @param {UiMessage[]} messages @param {{ id: string, names: string[] }} agent */
+export function findRunningExecutorJob(messages, agent) {
   const logs = messages
     .filter(
       (m) =>
         belongsToAgent(m, agent) &&
         m.msg_type === 'execution_log' &&
-        m.message?.status === 'running' &&
-        executorMessageMode(m) === mode,
+        m.message?.status === 'running',
     )
     .sort((a, b) => b.timestamp - a.timestamp)
   const latest = logs[0]
@@ -246,7 +245,7 @@ const ACTION_TYPE_TO_MODE = {
   'content.search': 'search_content',
 }
 
-/** 执行模块子能力：从消息 payload 推断 mode（默认 command） */
+/** 执行模块子能力：从消息 payload 推断 mode（缺省视为未知/自动） */
 /** @param {UiMessage} msg */
 export function executorMessageMode(msg) {
   const payload = msg.message?.payload
@@ -254,45 +253,33 @@ export function executorMessageMode(msg) {
     return payload.mode
   }
   if (msg.msg_type === 'execution_log') {
-    if (payload?.mode && KNOWN_EXECUTOR_MODES.has(payload.mode)) return payload.mode
     const actionType = payload?.result?.action_type || payload?.action_type
     if (actionType && ACTION_TYPE_TO_MODE[actionType]) {
       return ACTION_TYPE_TO_MODE[actionType]
     }
-    return 'command'
   }
-  return 'command'
+  return null
 }
 
-/** @param {UiMessage} msg @param {Map<string, UiMessage>} byId */
-function resolveExecutorMessageMode(msg, byId) {
-  const direct = executorMessageMode(msg)
-  if (msg.message?.payload?.mode) return direct
-  const replyTo = msg.message?.reply_to
-  if (replyTo && byId.has(replyTo)) {
-    return executorMessageMode(byId.get(replyTo))
-  }
-  return direct
-}
-
-/** 执行频道主区：按子能力过滤对话与执行日志 */
-/** @param {UiMessage[]} messages @param {{ id: string, names: string[] }} agent @param {'command'|'codegen'} [mode] */
-export function executorWorkspaceMessages(messages, agent, mode = 'command') {
-  const base = messages.filter(
+/** 执行频道主区：该智能体的对话与执行日志（不再按子能力 Tab 分流） */
+/** @param {UiMessage[]} messages @param {{ id: string, names: string[] }} agent */
+export function executorWorkspaceMessages(messages, agent) {
+  return messages.filter(
     (m) =>
       belongsToAgent(m, agent) &&
       (m.msg_type === 'text' || m.msg_type === 'execution_log'),
   )
-  const byId = new Map(base.map((m) => [m.id, m]))
-  return base.filter((m) => resolveExecutorMessageMode(m, byId) === mode)
 }
 
 /** 执行频道：附带独立 file_content 字段的用户消息（路径仍由模型从 text 解析） */
-/** @param {string} targetAgentId @param {{ content: string, instruction: string }} opts */
-export function buildExecutorMessageWithBody(targetAgentId, { content, instruction }) {
+/** @param {string} targetAgentId @param {{ content: string, instruction: string, mode?: string | null }} opts */
+export function buildExecutorMessageWithBody(targetAgentId, { content, instruction, mode = null }) {
   const agent = findAgentByName(targetAgentId)
   const target = agent?.names[0] || '执行模块'
   const text = instruction?.trim() || '将侧栏正文写入指定文件'
+  /** @type {Record<string, unknown>} */
+  const payload = { file_content: content }
+  if (mode) payload.mode = mode
   return {
     id: makeUserMessageId(),
     name: USER_SENDER,
@@ -301,7 +288,7 @@ export function buildExecutorMessageWithBody(targetAgentId, { content, instructi
     message: {
       text,
       role: 'user',
-      payload: { file_content: content, mode: 'write_file' },
+      payload,
     },
     timestamp: Math.floor(Date.now() / 1000),
   }

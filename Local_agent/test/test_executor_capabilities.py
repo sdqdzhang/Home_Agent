@@ -27,6 +27,11 @@ def test_execute_request_file_modes():
     assert req.mode == "read_file"
 
 
+def test_execute_request_mode_defaults_to_auto():
+    req = ExecuteRequest(action_text="列出当前目录")
+    assert req.mode is None
+
+
 def test_security_pseudo_commands():
     assert security_command_for_action(FileReadAction(path="a.txt")).startswith("executor:file.read")
     assert security_command_for_action(FileWriteAction(path="a.txt")).startswith("executor:file.write")

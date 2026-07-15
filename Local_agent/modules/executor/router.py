@@ -14,7 +14,7 @@ class ChatRequest(BaseModel):
     message: str
     session_id: str = "default"
     file_content: str | None = None
-    mode: ExecutorMode = "command"
+    mode: ExecutorMode | None = None
 
 
 def _get_service():

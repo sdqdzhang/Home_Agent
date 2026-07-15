@@ -148,6 +148,7 @@ class WriteFileCapability:
             run_action=lambda action, **kw: run_file_write(action, on_line=kw.get("on_line")),
             prepare_action=self._prepare_write_action,
         )
+        self._secured.mode = self.mode
 
     def _prepare_write_action(
         self,
@@ -174,6 +175,11 @@ class WriteFileCapability:
             "has_attached_body": has_attached_body,
             "fenced_blocks": fenced_blocks,
         }
+        job_log.info(
+            f"write_file parse: has_attached_body={has_attached_body} "
+            f"file_content_len={len(request.file_content or '')} "
+            f"fenced_blocks={len(fenced_blocks)}"
+        )
 
         action, parse_error = await self._assistant.parse_action(instruction, **parse_kwargs)
         if action is None:

@@ -2,7 +2,11 @@
 import { computed, ref } from 'vue'
 
 import { sendMessageLocal } from '../api/client.js'
-import { EXECUTOR_MODES, findExecutorMode } from '../config/executorModes.js'
+import {
+  EXECUTOR_MODE_AUTO,
+  EXECUTOR_MODES,
+  executorModeLabel,
+} from '../config/executorModes.js'
 import ChatInput from './ChatInput.vue'
 import MessageItem from './MessageItem.vue'
 import {
@@ -29,56 +33,61 @@ const TEXT_SUFFIXES = [
   '.sh', '.bash', '.bat', '.cmd', '.ps1', '.css', '.scss', '.less',
 ]
 
-const activeMode = ref('command')
+/** @type {import('vue').Ref<string>} */
+const forceMode = ref(EXECUTOR_MODE_AUTO)
 const sidebarOpen = ref(true)
 const fileContent = ref('')
 const loadError = ref('')
 const fileInput = ref(null)
 const cancelBusy = ref(false)
 
-const modeDef = computed(() => findExecutorMode(activeMode.value))
-const hasSidebar = computed(() => Boolean(modeDef.value.sidebar))
 const hasBody = computed(() => fileContent.value.length > 0)
-const runningJob = computed(() => findRunningExecutorJob(props.messages, props.agent, activeMode.value))
+const runningJob = computed(() => findRunningExecutorJob(props.messages, props.agent))
+const isForced = computed(() => forceMode.value !== EXECUTOR_MODE_AUTO)
 
 const workspaceMessages = computed(() =>
-  sortMessagesAsc(executorWorkspaceMessages(props.messages, props.agent, activeMode.value)),
+  sortMessagesAsc(executorWorkspaceMessages(props.messages, props.agent)),
 )
 
 const { listEl, scrollToBottom } = useChatScroll(workspaceMessages)
 
-function switchMode(modeId) {
-  if (activeMode.value === modeId) return
-  activeMode.value = modeId
-  loadError.value = ''
-}
+const headerHint = computed(() => {
+  if (isForced.value) {
+    const m = EXECUTOR_MODES.find((x) => x.id === forceMode.value)
+    return `已强制 ${m?.label || forceMode.value}：${m?.hint || ''}（调试用）`
+  }
+  return '自然语言交给执行模块自动选择子能力；侧栏正文仅作附件（有附件时必须是写入文件）'
+})
 
 function onChatSend(text, attachments) {
-  const body = hasSidebar.value ? fileContent.value : ''
+  const body = fileContent.value
   const trimmed = text.trim()
   if (!trimmed && !body && !attachments?.length) return
 
-  if (hasSidebar.value) {
-    if (body.length > 2_000_000) {
-      loadError.value = '正文过大（>2MB），请拆分后发送'
-      return
-    }
-    if (body && trimmed && !/写|保存|创建|新建|存入|覆盖/.test(trimmed)) {
-      loadError.value = '侧栏有正文时，请在消息中说明写入目标，如「将侧栏内容写入 workspace/123.py」'
-      return
-    }
-  } else if (activeMode.value === 'codegen' && attachments?.length) {
-    loadError.value = '代码生成模式不支持附件，请将规格写在消息中'
+  if (body.length > 2_000_000) {
+    loadError.value = '正文过大（>2MB），请拆分后发送'
     return
-  } else if (attachments?.length) {
-    loadError.value = '当前子能力不支持附件'
+  }
+
+  if (body && trimmed && !/写|保存|创建|新建|存入|覆盖|写入/.test(trimmed)) {
+    loadError.value = '侧栏有正文时，请在消息中说明写入目标，如「将侧栏内容写入 workspace/123.py」'
+    return
+  }
+
+  if (forceMode.value === 'codegen' && (body || attachments?.length)) {
+    loadError.value = '强制代码生成时请勿附带文件正文'
+    return
+  }
+
+  if (isForced.value && forceMode.value !== 'write_file' && (body || attachments?.length)) {
+    loadError.value = `强制 ${executorModeLabel(forceMode.value)} 时不能附带正文；请选「自动路由」或「写入文件」`
     return
   }
 
   loadError.value = ''
   scrollToBottom(false)
   emit('send', trimmed, attachments, {
-    mode: activeMode.value,
+    mode: isForced.value ? forceMode.value : null,
     fileContent: body || null,
   })
 }
@@ -151,33 +160,28 @@ function clearBody() {
 
 <template>
   <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
-    <div class="flex shrink-0 gap-1 overflow-x-auto border-b border-surface-border bg-surface-raised/60 px-3 py-2 scrollbar-thin md:px-4">
-      <button
-        v-for="mode in EXECUTOR_MODES"
-        :key="mode.id"
-        type="button"
-        class="shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors"
-        :class="
-          activeMode === mode.id
-            ? 'bg-indigo-600/90 text-white'
-            : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
-        "
-        @click="switchMode(mode.id)"
-      >
-        {{ mode.label }}
-      </button>
-    </div>
-
     <div class="flex min-h-0 flex-1 overflow-hidden">
       <section class="flex min-h-0 min-w-0 flex-1 flex-col">
         <div
-          class="flex shrink-0 items-center justify-between gap-3 border-b border-surface-border bg-indigo-500/5 px-4 py-2 md:px-5"
+          class="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-surface-border bg-indigo-500/5 px-4 py-2 md:px-5"
         >
-          <div class="min-w-0">
-            <p class="text-xs font-medium text-indigo-200">
-              {{ modeDef.label }}
-            </p>
-            <p class="text-[11px] text-slate-500">{{ modeDef.hint }}</p>
+          <div class="min-w-0 flex-1">
+            <div class="flex flex-wrap items-center gap-2">
+              <p class="text-xs font-medium text-indigo-200">执行</p>
+              <label class="flex items-center gap-1.5 text-[11px] text-slate-400">
+                <span>mode</span>
+                <select
+                  v-model="forceMode"
+                  class="rounded-md border border-surface-border bg-surface px-2 py-1 text-xs text-slate-200 outline-none focus:ring-1 focus:ring-indigo-500/40"
+                >
+                  <option :value="EXECUTOR_MODE_AUTO">自动路由</option>
+                  <option v-for="m in EXECUTOR_MODES" :key="m.id" :value="m.id">
+                    强制 · {{ m.label }}
+                  </option>
+                </select>
+              </label>
+            </div>
+            <p class="mt-0.5 text-[11px] text-slate-500">{{ headerHint }}</p>
           </div>
           <button
             v-if="runningJob"
@@ -193,7 +197,7 @@ function clearBody() {
         <div ref="listEl" class="flex-1 overflow-y-auto px-3 py-3 scrollbar-thin md:px-5">
           <div v-if="loading" class="flex h-32 items-center justify-center text-sm text-slate-500">加载中…</div>
           <p v-else-if="!workspaceMessages.length" class="py-10 text-center text-sm text-slate-500">
-            {{ modeDef.emptyHint }}
+            例如「列出当前目录下的 .py 文件」「读取 README.md」或「用 Python 实现 parse_csv…」
           </p>
           <div v-else class="mx-auto flex max-w-2xl flex-col gap-3">
             <MessageItem
@@ -206,7 +210,7 @@ function clearBody() {
         </div>
 
         <p
-          v-if="loadError && !hasSidebar"
+          v-if="loadError"
           class="mx-4 mb-1 shrink-0 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-300 md:mx-5"
         >
           {{ loadError }}
@@ -216,7 +220,6 @@ function clearBody() {
       </section>
 
       <aside
-        v-if="hasSidebar"
         class="flex shrink-0 flex-col border-l border-surface-border bg-surface-raised/80 transition-[width] duration-200 ease-out"
         :class="sidebarOpen ? 'w-full max-w-md md:w-[22rem]' : 'w-10'"
       >
@@ -238,26 +241,22 @@ function clearBody() {
         <div v-show="sidebarOpen" class="flex min-h-0 flex-1 flex-col overflow-hidden">
           <div class="shrink-0 border-b border-surface-border bg-emerald-500/5 px-3 py-2">
             <p class="text-[11px] leading-relaxed text-slate-500">
-              正文作为独立字段随消息发送，原样写入磁盘。路径、命令等仍由下方自然语言经模型解析。
+              附件正文独立发送、不进路由模型。有正文时后端只允许写入文件；路径由下方自然语言说明。
             </p>
           </div>
 
           <div class="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3 scrollbar-thin">
             <label class="flex min-h-0 flex-1 flex-col">
               <span class="mb-1 flex shrink-0 items-center justify-between text-[11px] text-slate-400">
-                <span>正文内容（任意文本）</span>
+                <span>正文内容（可选）</span>
                 <span v-if="hasBody" class="text-emerald-400/80">{{ fileContent.length }} 字符</span>
               </span>
               <textarea
                 v-model="fileContent"
                 class="min-h-[14rem] flex-1 resize-y rounded-lg border border-surface-border bg-surface px-2.5 py-2 font-mono text-xs leading-relaxed text-slate-200 outline-none focus:ring-1 focus:ring-emerald-500/40"
-                placeholder="粘贴或加载文件内容；发送时在对话框描述目标路径，如「写入 workspace/app.py」"
+                placeholder="粘贴或加载文件内容；发送时描述目标路径，如「写入 workspace/app.py」"
               />
             </label>
-
-            <p v-if="loadError" class="shrink-0 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-300">
-              {{ loadError }}
-            </p>
 
             <div class="flex shrink-0 flex-wrap gap-2">
               <button
@@ -279,7 +278,7 @@ function clearBody() {
             </div>
 
             <p class="shrink-0 text-[10px] leading-relaxed text-slate-600">
-              支持代码、配置、Markdown 等任意文本。也可在消息里用 ``` 代码块代替侧栏。
+              也可在消息里用 ``` 代码块代替侧栏。
             </p>
           </div>
         </div>
