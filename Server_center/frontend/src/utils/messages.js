@@ -54,6 +54,8 @@ export function messageSummary(msg) {
     return msg.message?.output?.id || msg.message?.requirement || '处理结果'
   }
   if (msg.msg_type === 'memory_record') return msg.message?.key || '记忆写入'
+  if (msg.msg_type === 'tool_result') return msg.message?.text || msg.message?.tool || '工具结果'
+  if (msg.msg_type === 'cm_snapshot') return '会话管理快照'
   return `[${msg.msg_type}]`
 }
 

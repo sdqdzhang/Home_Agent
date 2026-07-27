@@ -6,6 +6,7 @@ import { connectWebSocket, fetchChatMessages, fetchHealth, sendMessageLocal, WS_
 import AgentSidebar from './components/AgentSidebar.vue'
 import ChatHeader from './components/ChatHeader.vue'
 import ChatInput from './components/ChatInput.vue'
+import ConversationManagerWorkspace from './components/ConversationManagerWorkspace.vue'
 import CrawlerWorkspace from './components/CrawlerWorkspace.vue'
 import ExecutorWorkspace from './components/ExecutorWorkspace.vue'
 import EnvWorkspace from './components/EnvWorkspace.vue'
@@ -28,7 +29,7 @@ import {
 
 const agents = AGENTS
 const allMessages = ref([])
-const selectedAgentId = ref('jarvis')
+const selectedAgentId = ref('main')
 const mobileView = ref('list')
 const loading = ref(true)
 const wsConnected = ref(false)
@@ -329,8 +330,16 @@ onUnmounted(() => {
 
       <p v-if="error" class="bg-red-500/10 px-4 py-2 text-center text-xs text-red-300">{{ error }}</p>
 
+      <ConversationManagerWorkspace
+        v-if="selectedAgentId === 'conversation_manager'"
+        :messages="allMessages"
+        :loading="loading"
+        :agent="selectedAgent"
+        @error="onWorkspaceError"
+      />
+
       <EnvWorkspace
-        v-if="selectedAgentId === 'env'"
+        v-else-if="selectedAgentId === 'env'"
         :messages="allMessages"
         :loading="loading"
         :agent="selectedAgent"

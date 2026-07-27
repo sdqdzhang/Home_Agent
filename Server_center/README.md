@@ -325,7 +325,8 @@ ws://your-server:8765/ws/{target}
 
 | 模块 ID | 显示名 | 发送名（name 字段） | 常用 msg_type |
 |---------|--------|---------------------|---------------|
-| `jarvis` | 主对话 | `jarvis` / `主对话` | `text` |
+| `main` | 主对话 | `main` / `主对话` | `text` / `tool_result` |
+| `conversation_manager` | 会话管理 | `会话管理` / `conversation_manager` | `cm_snapshot` / `cm_event` |
 | `planning` | 规划 | `规划模块` / `planning` | `plan_result` |
 | `emotion` | 情感与性格状态 | `情感与性格状态模块` / `emotion` | `persona_state` |
 | `security` | 安全检查 | `安全检查模块` / `security` | `approval_request` |

@@ -19,6 +19,8 @@ _SERVICE_ATTRS: dict[str, str] = {
     "executor": "executor_service",
     "processor": "processor_service",
     "planning": "planning_service",
+    "main": "main_service",
+    "conversation_manager": "conversation_manager_service",
     "llm": "llm_config_service",
 }
 

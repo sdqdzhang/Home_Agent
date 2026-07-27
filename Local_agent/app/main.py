@@ -31,6 +31,10 @@ from modules.processor.router import router as processor_router
 from modules.processor.service import ProcessorService
 from modules.planning import MODULE_ID as PLANNING_ID
 from modules.planning.service import PlanningService
+from modules.main import MODULE_ID as MAIN_ID
+from modules.main.service import MainService
+from modules.conversation_manager import MODULE_ID as CM_ID
+from modules.conversation_manager.service import ConversationManagerService
 from modules.terminal.bridge import TerminalBridge
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -44,6 +48,8 @@ memory_service: MemoryService | None = None
 executor_service: ExecutorService | None = None
 processor_service: ProcessorService | None = None
 planning_service: PlanningService | None = None
+main_service: MainService | None = None
+conversation_manager_service: ConversationManagerService | None = None
 llm_config_service: LlmConfigService | None = None
 terminal_bridge: TerminalBridge | None = None
 _ws_listeners: list[WebSocketListener] = []
@@ -104,7 +110,7 @@ def _dedupe_ws_handler(handler, *, ttl_seconds: float = 120):
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    global crawler_service, env_service, rag_service, security_service, memory_service, executor_service, processor_service, planning_service, llm_config_service, terminal_bridge, _ws_listeners
+    global crawler_service, env_service, rag_service, security_service, memory_service, executor_service, processor_service, planning_service, main_service, conversation_manager_service, llm_config_service, terminal_bridge, _ws_listeners
 
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     settings.keys_dir.mkdir(parents=True, exist_ok=True)
@@ -121,6 +127,8 @@ async def lifespan(_: FastAPI):
     executor_client = await _register_module_client("执行模块", "executor")
     processor_client = await _register_module_client("处理", "processor")
     planning_client = await _register_module_client("规划模块", "planning")
+    main_client = await _register_module_client("主对话", "main")
+    cm_client = await _register_module_client("会话管理", "cm")
     llm_client = await _register_module_client("本地Agent", "llm")
 
     crawler_service = CrawlerService(server_client=crawler_client)
@@ -131,6 +139,8 @@ async def lifespan(_: FastAPI):
     executor_service = ExecutorService(server_client=executor_client)
     processor_service = ProcessorService(server_client=processor_client)
     planning_service = PlanningService(server_client=planning_client)
+    main_service = MainService(server_client=main_client)
+    conversation_manager_service = ConversationManagerService(server_client=cm_client)
     llm_config_service = LlmConfigService(server_client=llm_client)
     await env_service.start(use_model=True)
 
@@ -145,6 +155,8 @@ async def lifespan(_: FastAPI):
     await _start_ws_listeners((EXECUTOR_ID,), _dedupe_ws_handler(executor_service.handle_incoming_message))
     await _start_ws_listeners((PROCESSOR_ID,), _dedupe_ws_handler(processor_service.handle_incoming_message))
     await _start_ws_listeners((PLANNING_ID,), _dedupe_ws_handler(planning_service.handle_incoming_message))
+    await _start_ws_listeners((MAIN_ID,), _dedupe_ws_handler(main_service.handle_incoming_message))
+    await _start_ws_listeners((CM_ID,), _dedupe_ws_handler(conversation_manager_service.handle_incoming_message))
     await _start_ws_listeners((LLM_ID,), _dedupe_ws_handler(llm_config_service.handle_incoming_message))
 
     terminal_bridge = TerminalBridge()
@@ -189,6 +201,8 @@ def health() -> dict[str, object]:
             "executor": executor_service is not None,
             "processor": processor_service is not None,
             "planning": planning_service is not None,
+            "main": main_service is not None,
+            "conversation_manager": conversation_manager_service is not None,
             "llm_config": llm_config_service is not None,
             "terminal": terminal_bridge is not None and terminal_bridge.running,
         },

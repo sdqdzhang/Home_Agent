@@ -50,6 +50,8 @@ flowchart TB
 | LLM 配置 | `llm` / `local_agent` | SQLite 端点与槽位绑定，供 Web UI 管理 |
 | 远程终端 | — | Web 端 PTY 桥接（不经 AI 与安全检查） |
 | 规划 | `planning` | 目标→质询/探测→TaskGraph→执行；Web UI 工作台 + `local_bus` |
+| 主对话 | `main` | 聊天 + FC 编排（骨架）；见 [docs/main-conversation.md](docs/main-conversation.md) |
+| 会话管理 | `conversation_manager` | 程序驱动 State/Analyzer；指标工作台；非 FC 工具 |
 
 模块间同步调用走 `shared.local_bus`；需 UI 展示或审批留痕时走 `ServerCenterClient`。约定见 [docs/module-communication.md](docs/module-communication.md)。
 
@@ -74,9 +76,12 @@ Local_agent/
 │   ├── executor/               # 执行（command / 文件操作）
 │   ├── processor/              # 处理（要求 + DataBlock → DataBlock）
 │   ├── terminal/               # 远程终端 PTY 桥
-│   └── planning/               # 规划（TaskGraph；见 INTEGRATION.md）
+│   ├── planning/               # 规划（TaskGraph；见 INTEGRATION.md）
+│   ├── main/                   # 主对话（FC 编排骨架）
+│   └── conversation_manager/   # 会话管理（规则 + Analyzer 骨架）
 ├── docs/
-│   └── module-communication.md
+│   ├── module-communication.md
+│   └── main-conversation.md    # 主对话 / Manager 第一版设计
 ├── data/                       # 运行时数据（勿提交）
 ├── keys/                       # 客户端 RSA 密钥（勿提交）
 ├── test/                       # tkinter 图形测试（见 test/README.md）

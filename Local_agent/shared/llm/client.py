@@ -57,15 +57,18 @@ class LLMClient:
             self._openai_key = key
         return self._openai
 
-    async def chat(
+    async def chat_completion(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         *,
         model: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
         json_mode: bool = False,
-    ) -> str:
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """返回 assistant message 字典（含 content / tool_calls）。"""
         cfg = self.resolve_config()
         client = self._get_openai(cfg)
 
@@ -81,10 +84,59 @@ class LLMClient:
             kwargs["max_tokens"] = tokens
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
+        if tools:
+            kwargs["tools"] = tools
+            if tool_choice is not None:
+                kwargs["tool_choice"] = tool_choice
 
         response = await client.chat.completions.create(**kwargs)
-        content = response.choices[0].message.content
-        return content or ""
+        msg = response.choices[0].message
+        out: dict[str, Any] = {
+            "role": "assistant",
+            "content": msg.content or "",
+        }
+        raw_calls = getattr(msg, "tool_calls", None) or []
+        if raw_calls:
+            tool_calls: list[dict[str, Any]] = []
+            for tc in raw_calls:
+                fn = getattr(tc, "function", None)
+                tool_calls.append(
+                    {
+                        "id": getattr(tc, "id", "") or "",
+                        "type": "function",
+                        "function": {
+                            "name": getattr(fn, "name", "") if fn else "",
+                            "arguments": getattr(fn, "arguments", "") if fn else "",
+                        },
+                    }
+                )
+            out["tool_calls"] = tool_calls
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            out["_usage"] = {
+                "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+                "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
+                "total_tokens": getattr(usage, "total_tokens", 0) or 0,
+            }
+        return out
+
+    async def chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        json_mode: bool = False,
+    ) -> str:
+        out = await self.chat_completion(
+            messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            json_mode=json_mode,
+        )
+        return str(out.get("content") or "")
 
     async def chat_json(
         self,
