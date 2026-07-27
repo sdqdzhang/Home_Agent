@@ -10,3 +10,6 @@ Get-Content
 Get-ChildItem
 echo
 executor:file.read
+executor:dir.browse
+executor:file.search
+executor:content.search

@@ -334,7 +334,7 @@ ws://your-server:8765/ws/{target}
 | `crawler` | 网页爬取 | `网页爬取模块` / `crawler` | `execution_log` |
 | `rag` | RAG | `RAG模块` / `rag` | `rag_result` |
 | `executor` | 执行 | `执行模块` / `executor` | `execution_log` |
-| `reflection` | 自省与纠错 | `自省与纠错模块` / `reflection` | `reflection_note` |
+| `processor` | 处理 | `处理` / `processor` | `datablock` |
 
 查询模块元数据：`GET /api/v1/modules`
 
@@ -386,8 +386,8 @@ ws://your-server:8765/ws/{target}
 | `camera_capture` | `DesktopScreenshot.vue` | 摄像头拍照预览 |
 | `persona_state` | `PersonaState.vue` | 情感/性格状态卡片，**不触发**未读 |
 | `rag_result` | `RagResult.vue` | RAG 查询、回答与来源列表 |
-| `plan_result` | `PlanResult.vue` | 任务规划：目标 / 步骤 / 状态 |
-| `reflection_note` | `ReflectionNote.vue` | 自省：问题 / 分析 / 纠正 |
+| `plan_result` | `PlanResult.vue` | 任务规划：目标 / TaskGraph 节点 / 状态（兼容旧 steps） |
+| `datablock` | `DataBlockResult.vue` | 处理：要求 / 输出块 / 错误 |
 | `memory_record` | `MemoryRecord.vue` | 记忆键与摘要 |
 
 ### 各类型 message 字段约定
@@ -516,25 +516,55 @@ ws://your-server:8765/ws/{target}
 
 浏览器端读取文件后以 `ingest_text` 发送（非服务器路径）。需 Local Agent RAG 模块在线并监听 WebSocket。
 
-**plan_result**（规划模块，Local Agent 侧未开发，格式占位）
+**plan_result**（规划模块，TaskGraph）
 ```json
 {
-  "goal": "整理项目文档并写入 RAG",
-  "summary": "分三步：爬取、清洗、入库",
+  "ok": true,
+  "request_id": "uuid",
+  "goal": "有效目标全文",
+  "summary": "整理要求 → 生成脚本 → 写入工作区",
   "status": "draft",
-  "steps": [
-    { "title": "爬取 README 所在站点", "target_module": "crawler" },
-    { "title": "切块入库", "target_module": "rag" }
-  ]
+  "graph": {
+    "summary": "…",
+    "nodes": [
+      {
+        "id": "p_req",
+        "kind": "process",
+        "requirement": "整理脚本行为要求",
+        "inputs": [{"from": "goal", "role": "requirement"}],
+        "output": {"type": "requirement"}
+      }
+    ]
+  },
+  "error": ""
 }
 ```
 
-**reflection_note**
+另有工作台消息：`clarify_result` / `env_probe_result` / `plan_progress` / `graph_run_result`（见 Local_agent `modules/planning/INTEGRATION.md`）。
+
+**datablock**
 ```json
 {
-  "issue": "执行了错误的路径",
-  "analysis": "未校验 cwd 导致",
-  "correction": "执行前先 pwd 确认"
+  "ok": true,
+  "requirement": "根据上下文写出完整代码",
+  "request_id": "uuid",
+  "inputs": [
+    {
+      "id": "ui1",
+      "type": "code",
+      "content": "print('hello')",
+      "producer": "ui",
+      "metadata": { "language": "python" }
+    }
+  ],
+  "output": {
+    "id": "pro1",
+    "type": "code",
+    "content": "# hello\nprint('hello')",
+    "producer": "processor",
+    "metadata": { "language": "python" }
+  },
+  "error": ""
 }
 ```
 

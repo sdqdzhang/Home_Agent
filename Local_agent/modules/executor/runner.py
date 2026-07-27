@@ -16,6 +16,7 @@ from modules.executor.schemas import (
     SecurityInfo,
     ShellRunAction,
 )
+from typing import Any
 
 
 @dataclass
@@ -27,12 +28,14 @@ class RunOutput:
     files_touched: list[str] = field(default_factory=list)
 
 
-def security_command_for_action(action: ShellRunAction | FileReadAction | FileWriteAction) -> str:
-    if isinstance(action, ShellRunAction):
-        return action.command
-    if isinstance(action, FileReadAction):
-        return f"executor:file.read {action.path}"
-    return f"executor:file.write {action.path}"
+def decode_subprocess_output(data: bytes) -> str:
+    """解码子进程输出：优先 UTF-8，失败再回退 GBK（中文 Windows 控制台常见）。"""
+    if not data:
+        return ""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("gbk", errors="replace")
 
 
 def resolve_cwd(cwd: str | None) -> Path:
@@ -41,8 +44,20 @@ def resolve_cwd(cwd: str | None) -> Path:
     return executor_settings.default_cwd.resolve()
 
 
+def _normalize_path_text(path: str) -> str:
+    text = path.strip().strip('"').strip("'")
+    if not text:
+        return text
+    # 模型偶发输出 JSON 风格的多重反斜杠，收敛为单分隔符
+    if "\\" in text:
+        parts = [part for part in text.replace("/", "\\").split("\\") if part != ""]
+        if len(parts) >= 2 and parts[0].endswith(":"):
+            return "\\".join(parts)
+    return text
+
+
 def resolve_path(path: str) -> Path:
-    p = Path(path).expanduser()
+    p = Path(_normalize_path_text(path)).expanduser()
     if p.is_absolute():
         return p.resolve()
     return (executor_settings.default_cwd / p).resolve()
@@ -165,8 +180,8 @@ async def run_shell(
             run_ctx=run_ctx,
         )
 
-    stdout = stdout_b.decode("utf-8", errors="replace")
-    stderr = stderr_b.decode("utf-8", errors="replace")
+    stdout = decode_subprocess_output(stdout_b)
+    stderr = decode_subprocess_output(stderr_b)
     duration_ms = int((time.perf_counter() - started) * 1000)
 
     if on_line:
@@ -217,7 +232,7 @@ async def run_file_write(action: FileWriteAction, *, on_line: Callable[[str], No
 
 
 async def run_action(
-    action: ShellRunAction | FileReadAction | FileWriteAction,
+    action: Any,
     *,
     on_line: Callable[[str], None] | None = None,
     run_ctx: dict | None = None,
@@ -226,12 +241,14 @@ async def run_action(
         return await run_shell(action, on_line=on_line, run_ctx=run_ctx)
     if isinstance(action, FileReadAction):
         return await run_file_read(action, on_line=on_line)
-    return await run_file_write(action, on_line=on_line)
+    if isinstance(action, FileWriteAction):
+        return await run_file_write(action, on_line=on_line)
+    raise TypeError(f"unsupported action for run_action: {type(action)}")
 
 
 def output_to_result(
     job_id: str,
-    action: ShellRunAction | FileReadAction | FileWriteAction,
+    action: Any,
     output: RunOutput,
     *,
     security: SecurityInfo | None = None,

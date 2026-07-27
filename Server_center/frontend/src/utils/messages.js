@@ -39,14 +39,35 @@ export function messageSummary(msg) {
     return msg.message?.ok ? '安全规则已更新' : '安全规则配置失败'
   }
   if (msg.msg_type === 'plan_result') return msg.message?.goal || msg.message?.summary || '任务规划'
-  if (msg.msg_type === 'reflection_note') return msg.message?.issue || '自省记录'
+  if (msg.msg_type === 'clarify_result') {
+    return msg.message?.ready ? '信息已足够' : msg.message?.note || '质询'
+  }
+  if (msg.msg_type === 'env_probe_result') return '环境探测结果'
+  if (msg.msg_type === 'plan_progress') {
+    return `${msg.message?.node_id || '节点'} → ${msg.message?.status || ''}`
+  }
+  if (msg.msg_type === 'graph_run_result') {
+    return msg.message?.ok ? '任务图执行完成' : msg.message?.error || '任务图执行失败'
+  }
+  if (msg.msg_type === 'datablock') {
+    if (msg.message?.ok === false) return msg.message?.error || '处理失败'
+    return msg.message?.output?.id || msg.message?.requirement || '处理结果'
+  }
   if (msg.msg_type === 'memory_record') return msg.message?.key || '记忆写入'
   return `[${msg.msg_type}]`
 }
 
 /** @param {UiMessage} msg */
 export function countsAsUnread(msg) {
-  return msg.msg_type !== 'system_status' && msg.msg_type !== 'persona_state' && msg.msg_type !== 'llm_config_result' && msg.msg_type !== 'security_lists_result'
+  return (
+    msg.msg_type !== 'system_status' &&
+    msg.msg_type !== 'persona_state' &&
+    msg.msg_type !== 'llm_config_result' &&
+    msg.msg_type !== 'security_lists_result' &&
+    msg.msg_type !== 'plan_progress' &&
+    msg.msg_type !== 'clarify_result' &&
+    msg.msg_type !== 'env_probe_result'
+  )
 }
 
 /** @param {UiMessage[]} messages @param {{ id: string }} agent */
@@ -73,7 +94,8 @@ export function isAgentWorking(messages, agent) {
   if (!recent) return false
   const age = Date.now() / 1000 - recent.timestamp
   if (recent.msg_type === 'execution_log' && recent.message?.status === 'running') return true
-  if (['execution_log', 'rag_result'].includes(recent.msg_type) && age < 30) return true
+  if (recent.msg_type === 'plan_progress' && recent.message?.status === 'running') return true
+  if (['execution_log', 'rag_result', 'datablock', 'plan_result', 'graph_run_result'].includes(recent.msg_type) && age < 30) return true
   if (recent.msg_type !== 'system_status' && recent.msg_type !== 'persona_state' && age < 12) {
     return true
   }
@@ -223,7 +245,43 @@ export function buildExecutorCancelMessage(targetAgentId, jobId = null) {
   }
 }
 
-/** 执行频道主区：对话 + 执行日志 */
+const KNOWN_EXECUTOR_MODES = new Set([
+  'command',
+  'read_file',
+  'write_file',
+  'delete_file',
+  'browse_dir',
+  'search_file',
+  'search_content',
+])
+
+const ACTION_TYPE_TO_MODE = {
+  'shell.run': 'command',
+  'file.read': 'read_file',
+  'file.write': 'write_file',
+  'file.delete': 'delete_file',
+  'dir.browse': 'browse_dir',
+  'file.search': 'search_file',
+  'content.search': 'search_content',
+}
+
+/** 执行模块子能力：从消息 payload 推断 mode（缺省视为未知/自动） */
+/** @param {UiMessage} msg */
+export function executorMessageMode(msg) {
+  const payload = msg.message?.payload
+  if (payload?.mode && KNOWN_EXECUTOR_MODES.has(payload.mode)) {
+    return payload.mode
+  }
+  if (msg.msg_type === 'execution_log') {
+    const actionType = payload?.result?.action_type || payload?.action_type
+    if (actionType && ACTION_TYPE_TO_MODE[actionType]) {
+      return ACTION_TYPE_TO_MODE[actionType]
+    }
+  }
+  return null
+}
+
+/** 执行频道主区：该智能体的对话与执行日志（不再按子能力 Tab 分流） */
 /** @param {UiMessage[]} messages @param {{ id: string, names: string[] }} agent */
 export function executorWorkspaceMessages(messages, agent) {
   return messages.filter(
@@ -234,11 +292,14 @@ export function executorWorkspaceMessages(messages, agent) {
 }
 
 /** 执行频道：附带独立 file_content 字段的用户消息（路径仍由模型从 text 解析） */
-/** @param {string} targetAgentId @param {{ content: string, instruction: string }} opts */
-export function buildExecutorMessageWithBody(targetAgentId, { content, instruction }) {
+/** @param {string} targetAgentId @param {{ content: string, instruction: string, mode?: string | null }} opts */
+export function buildExecutorMessageWithBody(targetAgentId, { content, instruction, mode = null }) {
   const agent = findAgentByName(targetAgentId)
   const target = agent?.names[0] || '执行模块'
   const text = instruction?.trim() || '将侧栏正文写入指定文件'
+  /** @type {Record<string, unknown>} */
+  const payload = { file_content: content }
+  if (mode) payload.mode = mode
   return {
     id: makeUserMessageId(),
     name: USER_SENDER,
@@ -247,7 +308,7 @@ export function buildExecutorMessageWithBody(targetAgentId, { content, instructi
     message: {
       text,
       role: 'user',
-      payload: { file_content: content },
+      payload,
     },
     timestamp: Math.floor(Date.now() / 1000),
   }

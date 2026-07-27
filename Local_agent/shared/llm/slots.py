@@ -118,11 +118,39 @@ SLOT_DEFINITIONS: tuple[SlotDefinition, ...] = (
         description="记忆归档 embedding 模型",
     ),
     SlotDefinition(
-        slot_key="executor.chat",
-        label="执行动作解析",
+        slot_key="executor.route",
+        label="执行-子能力路由",
         module="executor",
         capability="chat",
-        description="将明确自然语言动作解析为 shell.run / file.read / file.write JSON",
+        description="自然语言 → 执行子能力 mode（command / 文件类）",
+    ),
+    SlotDefinition(
+        slot_key="executor.parse",
+        label="执行-动作解析",
+        module="executor",
+        capability="chat",
+        description="命令执行与文件操作子能力的自然语言 → JSON 解析（共用）",
+    ),
+    SlotDefinition(
+        slot_key="processor.process",
+        label="处理-数据块生成",
+        module="processor",
+        capability="chat",
+        description="要求 + DataBlock 上下文 → 产出一个 DataBlock",
+    ),
+    SlotDefinition(
+        slot_key="planning.clarify",
+        label="规划-质询",
+        module="planning",
+        capability="chat",
+        description="判断信息是否充足；不足则结构化质询与环境探测请求",
+    ),
+    SlotDefinition(
+        slot_key="planning.plan",
+        label="规划-任务图",
+        module="planning",
+        capability="chat",
+        description="根据目标与澄清结果一次性生成静态任务图",
     ),
 )
 

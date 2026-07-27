@@ -1,45 +1,62 @@
-# 规划模块（占位）
+# 规划模块（planning）
 
-> **状态：未开发。** 本目录仅预留模块 ID、名称与消息类型约定，便于后续实现；尚未接入 `app/main.py`，无 HTTP 路由与业务逻辑。
+接收用户目标 → 多轮**信息收集**（可选）→ **一次性**生成静态任务图（Task Graph）→ 可选拓扑执行。
 
-## 定位（草案）
+Web UI：Server Center「规划」频道工作台（质询 / 环境探测 / 画布 / 执行）。  
+其它模块：`local_bus.call("planning", …)`。详见 [INTEGRATION.md](INTEGRATION.md)。
 
-在 HomeAgent 中负责 **复杂目标 → 可执行子任务** 的分解与编排，例如：
+## 状态
 
-- 接收用户或主对话的高层目标
-- 拆分为可交给 crawler / rag / executor 等模块的步骤
-- 向 Server Center 推送 `plan_result`，供 Web UI「规划」频道展示
+| 项 | 现状 |
+|----|------|
+| 出图 `plan` | ✅ |
+| 质询 `clarify` / 环境探测 `run_env_query` | ✅ |
+| 拓扑执行 `run_graph` | ✅ |
+| `app/main` + Server Center / WS | ✅ |
+| Web UI 工作台 | ✅（Server Center frontend） |
+| HTTP router | ❌（走消息通道 + local_bus） |
 
-与 **执行模块**（真正跑命令）、**自省模块**（事后反思）形成「规划 → 执行 → 反思」链路；具体算法与调度策略待设计。
+## 原则
 
-## Server Center 集成（已预留）
+图中流动的只有 **DataBlock**。每个节点消费若干块、产出恰好一块；输入必须带 **role**。
+
+| role | 用于 | 含义 |
+|------|------|------|
+| `body` | Action | 写文件附件正文（至多 1 个） |
+| `context` | Action / Process | 仅依赖，不进附件 |
+| `requirement` | Process | 真正规格（至少 1 个） |
+| `material` | Process | 参考材料 |
+
+起点系统块：`id=goal`。环境探测成功块：`env1`、`env2`…。
+
+## 节点
+
+| kind | 运行时 |
+|------|--------|
+| `action` | `executor.execute`；仅 `role=body` 进 `file_content` |
+| `process` | `processor.process`；块带 `metadata.input_role` |
+
+## LLM 槽位
+
+| slot_key | 用途 |
+|----------|------|
+| `planning.clarify` | 信息是否足够；输出 questions / env_queries |
+| `planning.plan` | 一次性生成 TaskGraph JSON |
+
+## 模块元数据
 
 | 项 | 值 |
 |----|-----|
 | 模块 ID | `planning` |
 | 发送名 | `规划模块` / `planning` / `planner` |
-| 常用 `msg_type` | `plan_result`、`text` |
+| 常用 `msg_type` | `plan_result`、`clarify_result`、`env_probe_result`、`plan_progress`、`graph_run_result` |
 | `target` | `user_ui` |
 
-### `plan_result` 消息格式（占位）
+## 快速调用
 
-```json
-{
-  "goal": "整理项目文档并写入 RAG",
-  "summary": "分三步：爬取、清洗、入库",
-  "status": "draft",
-  "steps": [
-    { "title": "爬取 README 所在站点", "target_module": "crawler" },
-    { "title": "切块入库", "target_module": "rag" }
-  ]
-}
+```python
+from shared.local_bus import call
+from modules.planning.schemas import PlanRequest
+
+outcome = await call("planning", "plan", PlanRequest(goal="…"))
 ```
-
-`status` 建议取值：`draft` | `active` | `completed`（实现时可调整）。
-
-## 后续开发 checklist
-
-1. 在 `app/main.py` 注册 `PlanningService` 与 WebSocket 频道
-2. 实现 `service.py` / `router.py` / `schemas.py`（可参考 `modules/crawler` 结构）
-3. 如需 LLM，在 `shared/llm/slots.py` 增加 `planning.*` 槽位
-4. 与主对话、执行模块的调用关系在实现阶段再定

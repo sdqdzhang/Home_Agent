@@ -200,11 +200,43 @@ def build_seed_data() -> tuple[list[EndpointRecord], list[BindingRecord]]:
             updated_at=now,
         ),
         BindingRecord(
-            slot_key="executor.chat",
+            slot_key="executor.route",
+            endpoint_id=ep_default.id,
+            model_override=None,
+            temperature_override=0.0,
+            max_tokens_override=256,
+            updated_at=now,
+        ),
+        BindingRecord(
+            slot_key="executor.parse",
             endpoint_id=ep_default.id,
             model_override=None,
             temperature_override=0.0,
             max_tokens_override=1024,
+            updated_at=now,
+        ),
+        BindingRecord(
+            slot_key="processor.process",
+            endpoint_id=ep_default.id,
+            model_override=None,
+            temperature_override=0.2,
+            max_tokens_override=4096,
+            updated_at=now,
+        ),
+        BindingRecord(
+            slot_key="planning.clarify",
+            endpoint_id=ep_default.id,
+            model_override=None,
+            temperature_override=0.2,
+            max_tokens_override=2048,
+            updated_at=now,
+        ),
+        BindingRecord(
+            slot_key="planning.plan",
+            endpoint_id=ep_default.id,
+            model_override=None,
+            temperature_override=0.1,
+            max_tokens_override=4096,
             updated_at=now,
         ),
     ]
@@ -227,3 +259,79 @@ def seed_if_empty(store: LlmConfigStore) -> bool:
     endpoints, bindings = build_seed_data()
     store.replace_all(endpoints, bindings)
     return True
+
+
+def migrate_executor_slots(store: LlmConfigStore) -> None:
+    """合并执行解析槽位为 executor.parse，补齐 route，清理旧槽位与已移除槽位。"""
+    from modules.executor.llm_slots import (
+        EXECUTOR_PARSE_SLOT,
+        EXECUTOR_ROUTE_SLOT,
+        LEGACY_EXECUTOR_PARSE_SLOTS,
+        REMOVED_EXECUTOR_SLOTS,
+    )
+
+    parse_binding = store.get_binding(EXECUTOR_PARSE_SLOT)
+    if not parse_binding:
+        source = None
+        for legacy_key in LEGACY_EXECUTOR_PARSE_SLOTS:
+            source = store.get_binding(legacy_key)
+            if source:
+                break
+        if not source:
+            source = store.get_binding("default.chat")
+        if source:
+            store.upsert_binding(
+                EXECUTOR_PARSE_SLOT,
+                source.endpoint_id,
+                model_override=source.model_override,
+                temperature_override=source.temperature_override or 0.0,
+                max_tokens_override=source.max_tokens_override or 1024,
+            )
+
+    if not store.get_binding(EXECUTOR_ROUTE_SLOT):
+        source = store.get_binding(EXECUTOR_PARSE_SLOT) or store.get_binding("default.chat")
+        if source:
+            store.upsert_binding(
+                EXECUTOR_ROUTE_SLOT,
+                source.endpoint_id,
+                model_override=source.model_override,
+                temperature_override=0.0,
+                max_tokens_override=256,
+            )
+
+    for legacy_key in LEGACY_EXECUTOR_PARSE_SLOTS:
+        store.delete_binding(legacy_key)
+    for removed_key in REMOVED_EXECUTOR_SLOTS:
+        store.delete_binding(removed_key)
+
+
+def migrate_planning_slots(store: LlmConfigStore) -> None:
+    """已有 DB 补齐 planning.clarify / planning.plan；清理旧 planner.* 槽位。"""
+    source = store.get_binding("default.chat")
+    if not source:
+        return
+
+    if not store.get_binding("planning.clarify"):
+        legacy = store.get_binding("planner.clarify")
+        src = legacy or source
+        store.upsert_binding(
+            "planning.clarify",
+            src.endpoint_id,
+            model_override=src.model_override,
+            temperature_override=src.temperature_override if src.temperature_override is not None else 0.2,
+            max_tokens_override=src.max_tokens_override or 2048,
+        )
+
+    if not store.get_binding("planning.plan"):
+        legacy = store.get_binding("planner.plan")
+        src = legacy or source
+        store.upsert_binding(
+            "planning.plan",
+            src.endpoint_id,
+            model_override=src.model_override,
+            temperature_override=src.temperature_override if src.temperature_override is not None else 0.1,
+            max_tokens_override=src.max_tokens_override or 4096,
+        )
+
+    store.delete_binding("planner.clarify")
+    store.delete_binding("planner.plan")

@@ -1,13 +1,17 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { AGENTS } from './config/agents.js'
+import { EXECUTOR_MODES } from './config/executorModes.js'
 import { connectWebSocket, fetchChatMessages, fetchHealth, sendMessageLocal, WS_TARGET } from './api/client.js'
 import AgentSidebar from './components/AgentSidebar.vue'
 import ChatHeader from './components/ChatHeader.vue'
 import ChatInput from './components/ChatInput.vue'
+import CrawlerWorkspace from './components/CrawlerWorkspace.vue'
 import ExecutorWorkspace from './components/ExecutorWorkspace.vue'
 import EnvWorkspace from './components/EnvWorkspace.vue'
 import LlmConfigWorkspace from './components/LlmConfigWorkspace.vue'
+import ProcessorWorkspace from './components/ProcessorWorkspace.vue'
+import PlanningWorkspace from './components/PlanningWorkspace.vue'
 import RagWorkspace from './components/RagWorkspace.vue'
 import SecurityWorkspace from './components/SecurityWorkspace.vue'
 import TerminalWorkspace from './components/TerminalWorkspace.vue'
@@ -175,15 +179,24 @@ async function readAttachmentText(file) {
   })
 }
 
-async function onSend(text, attachments, sidebarFileContent = null) {
+async function onSend(text, attachments, executorOpts = null) {
   error.value = ''
   messageListRef.value?.scrollToBottom(false)
   try {
     let extraPayload = null
     if (selectedAgentId.value === 'executor') {
+      const opts =
+        executorOpts && typeof executorOpts === 'object' && !Array.isArray(executorOpts)
+          ? executorOpts
+          : { fileContent: executorOpts }
+      extraPayload = {}
+      if (opts.mode && EXECUTOR_MODES.some((m) => m.id === opts.mode)) {
+        extraPayload.mode = opts.mode
+      }
+
       let fileContent = null
-      if (sidebarFileContent != null && sidebarFileContent !== '') {
-        fileContent = sidebarFileContent
+      if (opts.fileContent != null && opts.fileContent !== '') {
+        fileContent = opts.fileContent
       } else if (attachments?.length) {
         const withRaw = attachments.filter((item) => item.raw)
         if (withRaw.length > 1) {
@@ -195,13 +208,16 @@ async function onSend(text, attachments, sidebarFileContent = null) {
         }
       }
       if (fileContent != null) {
-        extraPayload = { file_content: fileContent }
+        extraPayload.file_content = fileContent
+      }
+      if (!Object.keys(extraPayload).length) {
+        extraPayload = null
       }
     }
     const msg = buildUserTextMessage(selectedAgentId.value, text, attachments, extraPayload)
     const result = await sendMessageLocal(msg)
     upsertMessage(result.message)
-    if (sidebarFileContent) {
+    if (executorOpts?.fileContent) {
       executorWorkspaceRef.value?.clearAttachedBody?.()
     }
   } catch (e) {
@@ -354,6 +370,30 @@ onUnmounted(() => {
         :agent="selectedAgent"
         @send="onSend"
         @responded="onResponded"
+        @error="onWorkspaceError"
+      />
+
+      <ProcessorWorkspace
+        v-else-if="selectedAgentId === 'processor'"
+        :messages="allMessages"
+        :loading="loading"
+        :agent="selectedAgent"
+        @error="onWorkspaceError"
+      />
+
+      <PlanningWorkspace
+        v-else-if="selectedAgentId === 'planning'"
+        :messages="allMessages"
+        :loading="loading"
+        :agent="selectedAgent"
+        @error="onWorkspaceError"
+      />
+
+      <CrawlerWorkspace
+        v-else-if="selectedAgentId === 'crawler'"
+        :messages="allMessages"
+        :loading="loading"
+        :agent="selectedAgent"
         @error="onWorkspaceError"
       />
 

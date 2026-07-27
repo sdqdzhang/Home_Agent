@@ -6,7 +6,7 @@ import MemoryRecord from './messages/MemoryRecord.vue'
 import PersonaState from './messages/PersonaState.vue'
 import PlanResult from './messages/PlanResult.vue'
 import RagResult from './messages/RagResult.vue'
-import ReflectionNote from './messages/ReflectionNote.vue'
+import DataBlockResult from './messages/DataBlockResult.vue'
 import SystemStatus from './messages/SystemStatus.vue'
 import TextBubble from './messages/TextBubble.vue'
 
@@ -26,7 +26,7 @@ const renderers = {
   persona_state: PersonaState,
   rag_result: RagResult,
   plan_result: PlanResult,
-  reflection_note: ReflectionNote,
+  datablock: DataBlockResult,
   memory_record: MemoryRecord,
 }
 

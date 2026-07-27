@@ -4,11 +4,25 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+ExecutorMode = Literal[
+    "command",
+    "read_file",
+    "write_file",
+    "delete_file",
+    "browse_dir",
+    "search_file",
+    "search_content",
+]
+
 
 class ExecuteRequest(BaseModel):
-    """入口：明确的自然语言动作（非目标/需求）。"""
+    """入口：明确的自然语言动作或文件操作。
+
+    mode 缺省（None）时由执行模块 LLM 自动路由到子能力；显式传入则强制使用该 mode。
+    """
 
     action_text: str = Field(..., min_length=1)
+    mode: ExecutorMode | None = None
     caller_module: str = "unknown"
     caller_request_id: str = ""
     purpose: str = ""
@@ -43,10 +57,43 @@ class FileWriteAction(BaseModel):
     encoding: str = "utf-8"
 
 
-ParsedAction = Annotated[
-    ShellRunAction | FileReadAction | FileWriteAction,
+class FileDeleteAction(BaseModel):
+    type: Literal["file.delete"] = "file.delete"
+    path: str = Field(..., min_length=1)
+
+
+class DirBrowseAction(BaseModel):
+    type: Literal["dir.browse"] = "dir.browse"
+    path: str | None = None
+    max_depth: int = Field(default=4, ge=1, le=12)
+
+
+class FileSearchAction(BaseModel):
+    type: Literal["file.search"] = "file.search"
+    pattern: str = Field(..., min_length=1)
+    root: str | None = None
+
+
+class ContentSearchAction(BaseModel):
+    type: Literal["content.search"] = "content.search"
+    path: str = Field(..., min_length=1)
+    query: str = Field(..., min_length=1)
+    context_lines: int = Field(default=5, ge=0, le=20)
+
+
+ExecutorAction = Annotated[
+    ShellRunAction
+    | FileReadAction
+    | FileWriteAction
+    | FileDeleteAction
+    | DirBrowseAction
+    | FileSearchAction
+    | ContentSearchAction,
     Field(discriminator="type"),
 ]
+
+# 向后兼容
+ParsedAction = ExecutorAction
 
 
 class ParseFailure(BaseModel):

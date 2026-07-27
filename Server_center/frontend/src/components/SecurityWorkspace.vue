@@ -77,6 +77,29 @@ function purposeOf(msg) {
   return msg?.message?.payload?.purpose || ''
 }
 
+function yellowLogTitle(item) {
+  const payload = item?.message?.payload || {}
+  return [
+    payload.command || item?.message?.text,
+    payload.rule_reason ? `原因：${payload.rule_reason}` : '',
+    payload.purpose ? `目的：${payload.purpose}` : '',
+    payload.escalated ? '已升级为红色审批' : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+function approvalRecordTitle(item) {
+  return [
+    commandOf(item),
+    purposeOf(item) ? `目的：${purposeOf(item)}` : '',
+    item.response?.reason ? `备注：${item.response.reason}` : '',
+    item.status ? `状态：${item.status}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
 async function submitApproval(approved) {
   const msg = selectedApproval.value
   if (!msg || submitting.value || autoApprove.value) return
@@ -171,7 +194,7 @@ async function onSend(text) {
               "
               @click="!autoApprove && (selectedApprovalId = item.id)"
             >
-              <p class="truncate font-mono text-xs text-red-300">{{ commandOf(item) }}</p>
+              <p class="truncate font-mono text-xs text-red-300" :title="commandOf(item)">{{ commandOf(item) }}</p>
               <p class="mt-1 truncate text-xs text-slate-500">{{ formatTime(item.timestamp) }}</p>
             </li>
           </ul>
@@ -187,9 +210,10 @@ async function onSend(text) {
               v-for="item in yellowLogs"
               :key="item.id"
               class="mb-2 rounded-lg bg-yellow-500/5 px-3 py-2 text-slate-300"
+              :title="yellowLogTitle(item)"
             >
-              <p class="font-mono text-yellow-200/90">{{ item.message?.payload?.command || item.message?.text }}</p>
-              <p class="mt-1 text-slate-500">
+              <p class="truncate font-mono text-yellow-200/90">{{ item.message?.payload?.command || item.message?.text }}</p>
+              <p class="mt-1 truncate text-slate-500">
                 {{ item.message?.payload?.rule_reason }}
                 <span v-if="item.message?.payload?.escalated" class="text-red-400"> → 已升红</span>
               </p>
@@ -256,6 +280,7 @@ async function onSend(text) {
               v-for="item in approvalHistory"
               :key="item.id"
               class="mb-2 rounded-lg bg-slate-800/60 px-3 py-2"
+              :title="approvalRecordTitle(item)"
             >
               <div class="flex items-center justify-between gap-2">
                 <span
@@ -272,8 +297,10 @@ async function onSend(text) {
                 </span>
                 <span class="truncate text-slate-500">{{ formatTime(item.timestamp) }}</span>
               </div>
-              <p class="mt-1 truncate font-mono text-slate-300">{{ commandOf(item) }}</p>
-              <p v-if="item.response?.reason" class="mt-1 text-slate-500">{{ item.response.reason }}</p>
+              <p class="mt-1 truncate font-mono text-slate-300" :title="commandOf(item)">{{ commandOf(item) }}</p>
+              <p v-if="item.response?.reason" class="mt-1 truncate text-slate-500" :title="item.response.reason">
+                {{ item.response.reason }}
+              </p>
             </li>
           </ul>
         </section>

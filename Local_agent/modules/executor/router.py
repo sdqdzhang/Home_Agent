@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from modules.executor.schemas import ExecuteRequest
+from modules.executor.schemas import ExecuteRequest, ExecutorMode
 
 router = APIRouter(prefix="/executor", tags=["executor"])
 
@@ -14,6 +14,7 @@ class ChatRequest(BaseModel):
     message: str
     session_id: str = "default"
     file_content: str | None = None
+    mode: ExecutorMode | None = None
 
 
 def _get_service():
@@ -40,6 +41,7 @@ async def chat(req: ChatRequest) -> dict[str, str]:
         req.message,
         session_id=req.session_id,
         file_content=req.file_content,
+        mode=req.mode,
     )
     return {"reply": reply, "session_id": req.session_id}
 

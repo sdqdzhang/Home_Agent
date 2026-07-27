@@ -255,7 +255,10 @@ class SecurityService:
             if pending and not pending.future.done():
                 response = data.get("response") or {}
                 approved = status == "approved" or bool(response.get("approved"))
+                logger.info("Approval %s for %s -> %s", status, msg_id, approved)
                 pending.future.set_result(approved)
+            elif status in ("approved", "rejected"):
+                logger.warning("Approval %s for %s but no pending future", status, msg_id)
             return
 
         if data.get("name") != "user_ui":
