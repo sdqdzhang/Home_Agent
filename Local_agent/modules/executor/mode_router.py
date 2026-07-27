@@ -22,7 +22,6 @@ _MODE_GUIDE = """
 | browse_dir | 明确只要「看目录树结构」，且不要求跑 shell |
 | search_file | 明确要「按文件名/通配符找文件路径」 |
 | search_content | 明确要「在某个文件里搜一段文字」 |
-| codegen | 明确只要「根据规格生成代码文本」，且不执行、不写盘 |
 | command | **默认兜底**：凡不属于上面专用能力的，一律选 command（PowerShell/Shell 可查进程、系统信息、列目录、跑脚本、git 等） |
 """.strip()
 
@@ -30,7 +29,7 @@ ROUTE_SYSTEM = f"""你是 HomeAgent 执行模块的「子能力路由」助手�
 唯一任务：根据用户自然语言，判断应使用哪一个执行子能力（mode）。
 
 ## 核心原则（必须遵守）
-1. **专用能力优先匹配，但不勉强**：只有用户意图清晰落在 read_file / write_file / delete_file / browse_dir / search_file / search_content / codegen 时才选它们。
+1. **专用能力优先匹配，但不勉强**：只有用户意图清晰落在 read_file / write_file / delete_file / browse_dir / search_file / search_content 时才选它们。
 2. **其余全部走 command**：command 是兜底。PowerShell/Shell 能力最全；查进程、服务、端口、环境变量、压缩、安装、跑程序、git、「查看/列出某某」但不是读文件正文/目录树专用意图等，都选 command。
 3. **拿不准时选 command**，不要选错专用能力，也不要轻易 ok=false。
 4. 只有真正无法当作单一可执行动作时才 ok=false（例如一次要求多个无关动作、关键路径完全缺失且无法默认）。

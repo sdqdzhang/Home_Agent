@@ -39,14 +39,35 @@ export function messageSummary(msg) {
     return msg.message?.ok ? '安全规则已更新' : '安全规则配置失败'
   }
   if (msg.msg_type === 'plan_result') return msg.message?.goal || msg.message?.summary || '任务规划'
-  if (msg.msg_type === 'reflection_note') return msg.message?.issue || '自省记录'
+  if (msg.msg_type === 'clarify_result') {
+    return msg.message?.ready ? '信息已足够' : msg.message?.note || '质询'
+  }
+  if (msg.msg_type === 'env_probe_result') return '环境探测结果'
+  if (msg.msg_type === 'plan_progress') {
+    return `${msg.message?.node_id || '节点'} → ${msg.message?.status || ''}`
+  }
+  if (msg.msg_type === 'graph_run_result') {
+    return msg.message?.ok ? '任务图执行完成' : msg.message?.error || '任务图执行失败'
+  }
+  if (msg.msg_type === 'datablock') {
+    if (msg.message?.ok === false) return msg.message?.error || '处理失败'
+    return msg.message?.output?.id || msg.message?.requirement || '处理结果'
+  }
   if (msg.msg_type === 'memory_record') return msg.message?.key || '记忆写入'
   return `[${msg.msg_type}]`
 }
 
 /** @param {UiMessage} msg */
 export function countsAsUnread(msg) {
-  return msg.msg_type !== 'system_status' && msg.msg_type !== 'persona_state' && msg.msg_type !== 'llm_config_result' && msg.msg_type !== 'security_lists_result'
+  return (
+    msg.msg_type !== 'system_status' &&
+    msg.msg_type !== 'persona_state' &&
+    msg.msg_type !== 'llm_config_result' &&
+    msg.msg_type !== 'security_lists_result' &&
+    msg.msg_type !== 'plan_progress' &&
+    msg.msg_type !== 'clarify_result' &&
+    msg.msg_type !== 'env_probe_result'
+  )
 }
 
 /** @param {UiMessage[]} messages @param {{ id: string }} agent */
@@ -73,7 +94,8 @@ export function isAgentWorking(messages, agent) {
   if (!recent) return false
   const age = Date.now() / 1000 - recent.timestamp
   if (recent.msg_type === 'execution_log' && recent.message?.status === 'running') return true
-  if (['execution_log', 'rag_result'].includes(recent.msg_type) && age < 30) return true
+  if (recent.msg_type === 'plan_progress' && recent.message?.status === 'running') return true
+  if (['execution_log', 'rag_result', 'datablock', 'plan_result', 'graph_run_result'].includes(recent.msg_type) && age < 30) return true
   if (recent.msg_type !== 'system_status' && recent.msg_type !== 'persona_state' && age < 12) {
     return true
   }
@@ -225,7 +247,6 @@ export function buildExecutorCancelMessage(targetAgentId, jobId = null) {
 
 const KNOWN_EXECUTOR_MODES = new Set([
   'command',
-  'codegen',
   'read_file',
   'write_file',
   'delete_file',
@@ -236,7 +257,6 @@ const KNOWN_EXECUTOR_MODES = new Set([
 
 const ACTION_TYPE_TO_MODE = {
   'shell.run': 'command',
-  'code.generate': 'codegen',
   'file.read': 'read_file',
   'file.write': 'write_file',
   'file.delete': 'delete_file',

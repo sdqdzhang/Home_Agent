@@ -122,7 +122,7 @@ SLOT_DEFINITIONS: tuple[SlotDefinition, ...] = (
         label="执行-子能力路由",
         module="executor",
         capability="chat",
-        description="自然语言 → 执行子能力 mode（command / 文件类 / codegen）",
+        description="自然语言 → 执行子能力 mode（command / 文件类）",
     ),
     SlotDefinition(
         slot_key="executor.parse",
@@ -132,11 +132,25 @@ SLOT_DEFINITIONS: tuple[SlotDefinition, ...] = (
         description="命令执行与文件操作子能力的自然语言 → JSON 解析（共用）",
     ),
     SlotDefinition(
-        slot_key="executor.codegen",
-        label="执行-代码生成",
-        module="executor",
+        slot_key="processor.process",
+        label="处理-数据块生成",
+        module="processor",
         capability="chat",
-        description="根据详细规格生成完整代码（仅代码输出）",
+        description="要求 + DataBlock 上下文 → 产出一个 DataBlock",
+    ),
+    SlotDefinition(
+        slot_key="planning.clarify",
+        label="规划-质询",
+        module="planning",
+        capability="chat",
+        description="判断信息是否充足；不足则结构化质询与环境探测请求",
+    ),
+    SlotDefinition(
+        slot_key="planning.plan",
+        label="规划-任务图",
+        module="planning",
+        capability="chat",
+        description="根据目标与澄清结果一次性生成静态任务图",
     ),
 )
 

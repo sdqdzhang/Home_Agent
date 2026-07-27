@@ -5,7 +5,7 @@ from typing import Any
 
 from shared.llm.errors import InvalidSlotError
 from shared.llm.schemas import BindingRecord, EndpointRecord, ResolvedLLMConfig, SlotDefinition
-from shared.llm.seed import migrate_executor_slots, seed_if_empty
+from shared.llm.seed import migrate_executor_slots, migrate_planning_slots, seed_if_empty
 from shared.llm.slots import DEFAULT_CHAT_SLOT, SLOT_DEFINITIONS, get_slot, is_valid_slot
 from shared.llm.storage import LlmConfigStore
 
@@ -23,6 +23,7 @@ class ModelRegistry:
     def ensure_seeded(self) -> bool:
         seeded = seed_if_empty(self._store)
         migrate_executor_slots(self._store)
+        migrate_planning_slots(self._store)
         return seeded
 
     # --- 槽位元数据 ---

@@ -74,11 +74,6 @@ function onChatSend(text, attachments) {
     return
   }
 
-  if (forceMode.value === 'codegen' && (body || attachments?.length)) {
-    loadError.value = '强制代码生成时请勿附带文件正文'
-    return
-  }
-
   if (isForced.value && forceMode.value !== 'write_file' && (body || attachments?.length)) {
     loadError.value = `强制 ${executorModeLabel(forceMode.value)} 时不能附带正文；请选「自动路由」或「写入文件」`
     return

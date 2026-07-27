@@ -41,7 +41,6 @@ MODES: list[tuple[str, str]] = [
     ("browse_dir", "浏览目录"),
     ("search_file", "搜索文件"),
     ("search_content", "搜索内容"),
-    ("codegen", "代码生成"),
 ]
 
 

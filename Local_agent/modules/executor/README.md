@@ -1,6 +1,6 @@
 # 执行模块
 
-HomeAgent **行动层**：将明确动作或代码生成规格落地处理，不负责规划、决策或判断任务是否完成。
+HomeAgent **行动层**：将明确动作落地处理，不负责规划、决策或判断任务是否完成。
 
 ## 定位
 
@@ -8,7 +8,6 @@ HomeAgent **行动层**：将明确动作或代码生成规格落地处理，不
 |------|--------|
 | 自然语言自动路由到子能力并返回事实 | 理解模糊需求、规划、推断下一步 |
 | 命令执行：解析 → 安检 → shell/文件 IO | 补全参数、修改目标、自动重试 |
-| 代码生成：详细规格 → 完整代码 | 执行或写入生成的代码 |
 
 动作无法唯一确定 → 返回 `not_executable`。
 
@@ -28,9 +27,8 @@ HomeAgent **行动层**：将明确动作或代码生成规格落地处理，不
 | `command` | shell.run | 是 | `executor.parse` |
 | `read_file` / `write_file` / `delete_file` | 文件读写删 | 是 | `executor.parse` |
 | `browse_dir` / `search_file` / `search_content` | 目录浏览 / 搜文件 / 搜内容 | 是 | `executor.parse` |
-| `codegen` | 详细规格 → 纯代码输出（stdout） | 否 | `executor.codegen` |
 
-路由本身使用槽位 `executor.route`：专用文件/代码能力仅在意图明确时选用，**其余一律兜底到 `command`（Shell）**。
+路由本身使用槽位 `executor.route`：专用文件能力仅在意图明确时选用，**其余一律兜底到 `command`（Shell）**。
 
 ### write_file — 附件
 
@@ -38,20 +36,13 @@ HomeAgent **行动层**：将明确动作或代码生成规格落地处理，不
 - 附件正文不进 LLM；有附件时模型只解析目标路径
 - 有附件却未判定为 `write_file`（含用 shell 写文件）→ 错误
 
-### codegen
-
-- 输入：`action_text` 为完整、详细的规格说明
-- 输出：`ok=true`，`action_type=code.generate`，`stdout` 为纯代码
-- 不经 SecurityService，不执行、不写盘
-- 可被自动路由选中（也可用显式 `mode=codegen`）
-
 ## 核心流程
 
 ```
 ExecuteRequest(action_text[, mode][, file_content])
   → mode 缺省: executor.route → 确定 mode
   → 有附件且 mode ≠ write_file → not_executable
-  → capabilities/{mode}: LLM 解析 →（多数）安检 → 执行 / 生成
+  → capabilities/{mode}: LLM 解析 → 安检 → 执行
   → ExecuteResult + execution_log + jobs.db
 ```
 
@@ -76,8 +67,8 @@ result = await call(
     "executor",
     "execute",
     ExecuteRequest(
-        mode="codegen",
-        action_text="用 Python 写一个函数 parse_csv(path: str) -> list[dict]...",
+        mode="command",
+        action_text="Get-ChildItem -Recurse -Filter *.py",
         caller_module="planning",
     ),
 )
@@ -98,9 +89,8 @@ result = await call(
 |------|------|
 | `executor.route` | 自然语言 → 子能力 `mode` |
 | `executor.parse` | 命令 / 文件类 JSON 解析（共用） |
-| `executor.codegen` | 详细规格 → 完整代码 |
 
-旧槽位（`executor.chat`、`executor.command.parse`、`executor.*.parse` 等）启动时自动合并为 `executor.parse`；缺省时补齐 `executor.route` / `executor.codegen`。
+旧槽位（`executor.chat`、`executor.command.parse`、`executor.*.parse` 等）启动时自动合并为 `executor.parse`；缺省时补齐 `executor.route`。已移除的槽位（如 `executor.codegen`）启动时删除 binding。
 
 ## 配置（`LA_EXECUTOR_`）
 
@@ -123,7 +113,6 @@ modules/executor/
   capabilities/
     command/       # 命令执行
     files/         # 文件类子能力
-    codegen/       # 代码生成
   service.py       # 路由与 Web UI
   schemas.py       # 统一入参/出参
   runner.py        # shell / 文件 IO

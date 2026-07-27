@@ -1,6 +1,6 @@
 /** 执行模块子能力（与 Local_agent ExecuteRequest.mode 对齐） */
 
-/** @typedef {'command'|'read_file'|'write_file'|'delete_file'|'browse_dir'|'search_file'|'search_content'|'codegen'} ExecutorModeId */
+/** @typedef {'command'|'read_file'|'write_file'|'delete_file'|'browse_dir'|'search_file'|'search_content'} ExecutorModeId */
 
 /** @typedef {{ id: ExecutorModeId, label: string, hint: string }} ExecutorModeDef */
 
@@ -43,11 +43,6 @@ export const EXECUTOR_MODES = [
     id: 'search_content',
     label: '搜索内容',
     hint: '文件内文本搜索',
-  },
-  {
-    id: 'codegen',
-    label: '代码生成',
-    hint: '规格 → 纯代码（不经安检）',
   },
 ]
 

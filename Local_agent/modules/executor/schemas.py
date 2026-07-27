@@ -6,7 +6,6 @@ from pydantic import BaseModel, Field, field_validator
 
 ExecutorMode = Literal[
     "command",
-    "codegen",
     "read_file",
     "write_file",
     "delete_file",
@@ -17,7 +16,7 @@ ExecutorMode = Literal[
 
 
 class ExecuteRequest(BaseModel):
-    """入口：明确的自然语言动作、文件操作或代码生成规格。
+    """入口：明确的自然语言动作或文件操作。
 
     mode 缺省（None）时由执行模块 LLM 自动路由到子能力；显式传入则强制使用该 mode。
     """

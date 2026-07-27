@@ -45,10 +45,11 @@ flowchart TB
 | RAG | `rag` | Chroma 向量库、多策略分块、检索问答 |
 | 安全检查 | `security` | 四列表规则、黄/红审批、模型升红与自动审批 |
 | 记忆 | `memory` | 观察打分、工作记忆、向量归档、三维检索、反思 |
-| 执行 | `executor` | 自然语言自动路由子能力 → 安检 → 执行；代码生成 |
+| 执行 | `executor` | 自然语言自动路由子能力 → 安检 → 执行 |
+| 处理 | `processor` | 要求 + DataBlock 上下文 → 产出一个 DataBlock |
 | LLM 配置 | `llm` / `local_agent` | SQLite 端点与槽位绑定，供 Web UI 管理 |
 | 远程终端 | — | Web 端 PTY 桥接（不经 AI 与安全检查） |
-| 规划 | `planning` | **占位**，尚未接入 `app/main.py` |
+| 规划 | `planning` | 目标→质询/探测→TaskGraph→执行；Web UI 工作台 + `local_bus` |
 
 模块间同步调用走 `shared.local_bus`；需 UI 展示或审批留痕时走 `ServerCenterClient`。约定见 [docs/module-communication.md](docs/module-communication.md)。
 
@@ -70,9 +71,10 @@ Local_agent/
 │   ├── rag/                    # RAG 检索增强
 │   ├── security/             # 安全检查（lists/ 四列表配置）
 │   ├── memory/                 # 长期记忆
-│   ├── executor/               # 执行（command / codegen）
+│   ├── executor/               # 执行（command / 文件操作）
+│   ├── processor/              # 处理（要求 + DataBlock → DataBlock）
 │   ├── terminal/               # 远程终端 PTY 桥
-│   └── planning/               # 规划占位
+│   └── planning/               # 规划（TaskGraph；见 INTEGRATION.md）
 ├── docs/
 │   └── module-communication.md
 ├── data/                       # 运行时数据（勿提交）
@@ -205,7 +207,7 @@ HTTP 路由仅供 curl / GUI 调试；**模块互调禁止走 `:8770` HTTP**。
 | POST | `/jobs/{id}/cancel` | 取消任务 |
 | POST | `/jobs/cancel` | 批量取消 |
 
-缺省只传自然语言；LLM 先选子能力（`command` / 文件类 / `codegen`），再解析执行。`mode` 显式传入时可强制子能力。有 `file_content` 附件时必须走 `write_file`，附件正文不进 LLM。
+缺省只传自然语言；LLM 先选子能力（`command` / 文件类），再解析执行。`mode` 显式传入时可强制子能力。有 `file_content` 附件时必须走 `write_file`，附件正文不进 LLM。
 
 ```python
 from shared.local_bus import call
@@ -232,7 +234,7 @@ result = await call("executor", "execute", ExecuteRequest(
 | 记忆 | `记忆模块` / `memory` | `memory_record`、`text` | — |
 | 执行 | `执行模块` / `executor` | `execution_log` | [modules/executor/README.md](modules/executor/README.md) |
 | LLM 配置 | `本地Agent` / `local_agent` | `llm_config_result` | 下文 |
-| 规划（占位） | `规划模块` / `planning` | `plan_result`、`text` | [modules/planning/README.md](modules/planning/README.md) |
+| 规划 | `规划模块` / `planning` | `plan_result`、`text` | [modules/planning/README.md](modules/planning/README.md) · [INTEGRATION.md](modules/planning/INTEGRATION.md) |
 | 远程终端 | — | WebSocket `/ws/terminal_agent` | `LA_TERMINAL_ENABLED` |
 
 **推送联调示例**（环境感知）：
@@ -264,7 +266,7 @@ result = await call("executor", "execute", ExecuteRequest(
 | `env.summary` / `env.chat` | env | 周期总结 / 问答 |
 | `security.judge` / `security.chat` / `security.auto_approve` | security | 升红判定 / 对话 / 自动审批 |
 | `memory.assess` / `memory.reflect` / `memory.summarize` / `memory.tag` / `memory.embed` | memory | 打分 / 反思 / 对话总结 / 标签 / 向量化 |
-| `executor.route` / `executor.parse` / `executor.codegen` | executor | 子能力路由 / 动作解析 / 代码生成 |
+| `executor.route` / `executor.parse` | executor | 子能力路由 / 动作解析 |
 
 ### 代码调用
 

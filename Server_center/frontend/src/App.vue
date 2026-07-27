@@ -6,9 +6,12 @@ import { connectWebSocket, fetchChatMessages, fetchHealth, sendMessageLocal, WS_
 import AgentSidebar from './components/AgentSidebar.vue'
 import ChatHeader from './components/ChatHeader.vue'
 import ChatInput from './components/ChatInput.vue'
+import CrawlerWorkspace from './components/CrawlerWorkspace.vue'
 import ExecutorWorkspace from './components/ExecutorWorkspace.vue'
 import EnvWorkspace from './components/EnvWorkspace.vue'
 import LlmConfigWorkspace from './components/LlmConfigWorkspace.vue'
+import ProcessorWorkspace from './components/ProcessorWorkspace.vue'
+import PlanningWorkspace from './components/PlanningWorkspace.vue'
 import RagWorkspace from './components/RagWorkspace.vue'
 import SecurityWorkspace from './components/SecurityWorkspace.vue'
 import TerminalWorkspace from './components/TerminalWorkspace.vue'
@@ -367,6 +370,30 @@ onUnmounted(() => {
         :agent="selectedAgent"
         @send="onSend"
         @responded="onResponded"
+        @error="onWorkspaceError"
+      />
+
+      <ProcessorWorkspace
+        v-else-if="selectedAgentId === 'processor'"
+        :messages="allMessages"
+        :loading="loading"
+        :agent="selectedAgent"
+        @error="onWorkspaceError"
+      />
+
+      <PlanningWorkspace
+        v-else-if="selectedAgentId === 'planning'"
+        :messages="allMessages"
+        :loading="loading"
+        :agent="selectedAgent"
+        @error="onWorkspaceError"
+      />
+
+      <CrawlerWorkspace
+        v-else-if="selectedAgentId === 'crawler'"
+        :messages="allMessages"
+        :loading="loading"
+        :agent="selectedAgent"
         @error="onWorkspaceError"
       />
 

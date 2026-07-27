@@ -27,7 +27,7 @@ _CANCEL_PHRASES = frozenset({
 
 
 class ExecutorService:
-    """执行模块：按 mode 路由到子能力（命令执行 / 代码生成等）。"""
+    """执行模块：按 mode 路由到子能力（命令执行 / 文件操作等）。"""
 
     def __init__(self, server_client: ServerCenterClient | None = None) -> None:
         executor_settings.data_dir.mkdir(parents=True, exist_ok=True)
@@ -197,7 +197,6 @@ class ExecutorService:
         elif result.action_type:
             action_to_mode = {
                 "shell.run": "command",
-                "code.generate": "codegen",
                 "file.read": "read_file",
                 "file.write": "write_file",
                 "file.delete": "delete_file",
@@ -331,11 +330,6 @@ class ExecutorService:
         if result.error == "cancelled":
             return f"已终止执行（job_id={result.job_id}）"
         if result.ok:
-            if result.action_type == "code.generate":
-                lines = [f"代码生成完成（job_id={result.job_id}）"]
-                if result.stdout:
-                    lines.append(result.stdout)
-                return "\n".join(lines)
             preview = result.stdout.strip()
             if len(preview) > 2000:
                 preview = preview[:2000] + "\n…（输出已截断）"
