@@ -152,6 +152,20 @@ SLOT_DEFINITIONS: tuple[SlotDefinition, ...] = (
         capability="chat",
         description="根据目标与澄清结果一次性生成静态任务图",
     ),
+    SlotDefinition(
+        slot_key="main.chat",
+        label="主对话",
+        module="main",
+        capability="chat",
+        description="主对话聊天与 Function Calling 编排",
+    ),
+    SlotDefinition(
+        slot_key="conversation.analyze",
+        label="会话分析",
+        module="conversation_manager",
+        capability="chat",
+        description="规则触发后更新 Conversation State / Summary / 记忆候选等",
+    ),
 )
 
 SLOT_BY_KEY: dict[str, SlotDefinition] = {item.slot_key: item for item in SLOT_DEFINITIONS}

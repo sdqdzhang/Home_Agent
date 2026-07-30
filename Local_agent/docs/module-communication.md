@@ -41,3 +41,5 @@ await push_to_ui("rag", msg_type="text", message={"text": "...", "role": "agent"
 - `shared/server_center/client.py` — RSA 消息客户端
 - `modules/security/INTEGRATION.md` — 安全检查对接
 - `modules/planning/INTEGRATION.md` — 规划质询 / 出图 / 执行图对接
+- `docs/main-conversation.md` — 主对话 FC + Conversation Manager
+- `modules/conversation_manager/INTEGRATION.md` — 会话管理程序调用约定

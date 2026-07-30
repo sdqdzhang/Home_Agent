@@ -12,13 +12,22 @@
 /** @type {Agent[]} */
 export const AGENTS = [
   {
-    id: 'jarvis',
+    id: 'main',
     label: '主对话',
-    names: ['jarvis', 'Jarvis', '主对话'],
+    names: ['main', '主对话'],
     defaultMood: '平静',
     icon: '◉',
-    description: '日常聊天',
-    defaultMsgTypes: ['text'],
+    description: '主对话：聊天 + Function Calling 编排（规划/执行/RAG/环境/扩展）',
+    defaultMsgTypes: ['text', 'tool_result', 'plan_result', 'clarify_result', 'plan_progress', 'graph_run_result'],
+  },
+  {
+    id: 'conversation_manager',
+    label: '会话管理',
+    names: ['会话管理', 'conversation_manager', 'cm'],
+    defaultMood: '观察中',
+    icon: '☰',
+    description: '会话生命周期：规则触发 Analyzer、Conversation State、记忆候选与指标',
+    defaultMsgTypes: ['cm_snapshot', 'cm_event', 'text'],
   },
   {
     id: 'planning',
@@ -53,7 +62,7 @@ export const AGENTS = [
     names: ['环境感知模块', 'env_sense', 'env'],
     defaultMood: '观察中',
     icon: '◈',
-    description: '系统与环境状态静默上报',
+    description: '系统采集与摘要；主对话仅在主动工具调用时展示结果',
     defaultMsgTypes: ['system_status', 'desktop_screenshot', 'camera_capture'],
   },
   {
@@ -71,7 +80,7 @@ export const AGENTS = [
     names: ['网页爬取模块', 'crawler'],
     defaultMood: '待命',
     icon: '◍',
-    description: '网页抓取、过滤预览，并可将正文保存为文件',
+    description: '网页抓取（主对话扩展工具）；过滤预览，可将正文保存为文件',
     defaultMsgTypes: ['execution_log'],
   },
   {

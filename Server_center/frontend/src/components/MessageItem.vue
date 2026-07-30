@@ -18,6 +18,7 @@ defineEmits(['responded'])
 
 const renderers = {
   text: TextBubble,
+  tool_result: TextBubble,
   approval_request: ApprovalCard,
   execution_log: ExecutionLog,
   system_status: SystemStatus,
@@ -26,8 +27,14 @@ const renderers = {
   persona_state: PersonaState,
   rag_result: RagResult,
   plan_result: PlanResult,
+  clarify_result: TextBubble,
+  env_probe_result: TextBubble,
+  plan_progress: TextBubble,
+  graph_run_result: TextBubble,
   datablock: DataBlockResult,
   memory_record: MemoryRecord,
+  cm_snapshot: TextBubble,
+  cm_event: TextBubble,
 }
 
 function resolveComponent(msg) {
