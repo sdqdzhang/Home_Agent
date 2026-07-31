@@ -37,3 +37,11 @@ class ClientRegistration(BaseModel):
 class ApprovalResponseMessage(BaseModel):
     approved: bool
     reason: str = ""
+
+
+class MessageUpdateBody(BaseModel):
+    """原地更新消息内容（用于规划会话卡等可演化消息）。"""
+
+    message: dict[str, Any] | None = None
+    status: str | None = None
+    timestamp: int | None = None

@@ -175,6 +175,7 @@ class PlanningService:
         initial_blocks: list[DataBlock] | None = None,
         log: LogFn | None = None,
         on_progress: Callable[[str, str, int, str], None] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> GraphRunResult:
         init_ids = frozenset(b.id for b in (initial_blocks or []))
         errors = validate_task_graph(graph, initial_block_ids=init_ids)
@@ -186,7 +187,12 @@ class PlanningService:
                 error="任务图校验失败: " + "; ".join(errors),
             )
         runtime = GraphRuntime(log=log, on_progress=on_progress)
-        return await runtime.run(goal, graph, initial_blocks=initial_blocks)
+        return await runtime.run(
+            goal,
+            graph,
+            initial_blocks=initial_blocks,
+            cancel_check=cancel_check,
+        )
 
     # ---------- Server Center / UI ----------
 

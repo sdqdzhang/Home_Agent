@@ -19,7 +19,14 @@ function agentMessages(agent) {
 }
 
 function lastMessage(agent) {
-  const list = agentMessages(agent)
+  const list = agentMessages(agent).filter(
+    (m) =>
+      m.msg_type !== 'plan_progress' &&
+      m.msg_type !== 'clarify_result' &&
+      m.msg_type !== 'env_probe_result' &&
+      m.msg_type !== 'graph_run_result' &&
+      m.msg_type !== 'planning_action',
+  )
   if (!list.length) return null
   return list.reduce((a, b) => (a.timestamp >= b.timestamp ? a : b))
 }

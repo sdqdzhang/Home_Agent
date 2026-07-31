@@ -9,7 +9,7 @@
 | 主对话 LLM tool | — | ❌ |
 | 本模块 → `planning` | — | ❌ |
 
-记忆写入由本模块在 Analyzer 产出 Memory Candidates 后调用 `memory`（待实现）；**不**把 memory 暴露给 main FC。
+记忆写入由本模块在 Analyzer 产出 Memory Candidates 后调用 `memory.observe`；**不**把 memory 暴露给 main FC。
 
 ## 进程内
 

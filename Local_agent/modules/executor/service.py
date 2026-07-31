@@ -38,6 +38,8 @@ class ExecutorService:
         self.capabilities = dict(CAPABILITIES)
         self.mode_router = ModeRouter()
         self.server = server_client
+        # job_id → 已创建的 execution_log 消息 id（同任务原地更新，避免刷屏）
+        self._log_msg_ids: dict[str, str] = {}
         self._active: dict[str, dict[str, Any]] = {}
 
     def _register_run(self, job_id: str) -> dict[str, Any]:
@@ -349,11 +351,41 @@ class ExecutorService:
     ) -> None:
         if not self.server:
             return
+        payload = dict(payload or {})
+        job_id = str(payload.get("job_id") or "").strip()
         message: dict[str, Any] = {
             "summary": summary,
             "status": status,
             "log": log or [],
+            "payload": payload,
         }
-        if payload:
-            message["payload"] = payload
-        await self.server.send_message(msg_type=DEFAULT_MSG_TYPE, message=message)
+
+        existing_id = self._log_msg_ids.get(job_id) if job_id else None
+        if existing_id:
+            try:
+                await self.server.update_message(existing_id, message=message)
+                return
+            except Exception:
+                logger.exception("executor update_log failed for %s, will recreate", existing_id)
+
+        preferred_id = f"exec_log_{job_id}" if job_id else None
+        try:
+            result = await self.server.send_message(
+                msg_type=DEFAULT_MSG_TYPE,
+                message=message,
+                msg_id=preferred_id,
+            )
+            if job_id:
+                self._log_msg_ids[job_id] = self.server.message_id_from_response(
+                    result, preferred_id or ""
+                )
+        except Exception:
+            logger.exception("executor push_log failed")
+            # 若 id 冲突（进程重启后同 job 再推），尝试改为更新
+            if preferred_id:
+                try:
+                    await self.server.update_message(preferred_id, message=message)
+                    if job_id:
+                        self._log_msg_ids[job_id] = preferred_id
+                except Exception:
+                    logger.exception("executor push_log fallback update failed")

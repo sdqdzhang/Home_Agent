@@ -130,6 +130,8 @@ class GraphRuntime:
         goal: str,
         graph: TaskGraph,
         initial_blocks: list[DataBlock] | None = None,
+        *,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> GraphRunResult:
         nodes = list(graph.nodes)
         node_map: dict[str, ActionNode | ProcessNode] = {n.id: n for n in nodes}
@@ -348,6 +350,22 @@ class GraphRuntime:
 
         # 真正的 DAG 并发：任一节点完成就立刻调度其后继
         while pending_ready or in_flight:
+            if cancel_check and cancel_check():
+                for t in list(in_flight.values()):
+                    t.cancel()
+                for nid in list(in_flight.keys()):
+                    if status[nid].status == "running":
+                        status[nid].status = "skipped"
+                        status[nid].error = "cancelled"
+                        failed_or_skipped.add(nid)
+                        self._emit(status[nid])
+                in_flight.clear()
+                task_failed = True
+                if not fail_reason:
+                    fail_reason = "用户取消规划"
+                self.log("[cancel] 用户取消，停止调度新节点")
+                break
+
             for nid in pending_ready:
                 if nid in failed_or_skipped or nid in in_flight:
                     continue

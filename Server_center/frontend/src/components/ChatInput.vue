@@ -3,6 +3,7 @@ import { ref } from 'vue'
 
 const props = defineProps({
   disabled: { type: Boolean, default: false },
+  placeholder: { type: String, default: '输入消息，或拖拽文件到此处…' },
 })
 
 const emit = defineEmits(['send'])
@@ -39,6 +40,7 @@ function removeFile(i) {
 }
 
 function submit() {
+  if (props.disabled) return
   const value = text.value.trim()
   if (!value && !files.value.length) return
   emit(
@@ -94,7 +96,7 @@ function onKeydown(e) {
         v-model="text"
         rows="1"
         :disabled="disabled"
-        placeholder="输入消息，或拖拽文件到此处…"
+        :placeholder="placeholder"
         class="max-h-32 min-h-[2.5rem] flex-1 resize-none bg-transparent py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none disabled:opacity-50"
         @keydown="onKeydown"
       />

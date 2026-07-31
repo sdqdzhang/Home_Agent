@@ -1,10 +1,12 @@
 <script setup>
 import ApprovalCard from './messages/ApprovalCard.vue'
+import ClarifyCard from './messages/ClarifyCard.vue'
 import DesktopScreenshot from './messages/DesktopScreenshot.vue'
 import ExecutionLog from './messages/ExecutionLog.vue'
 import MemoryRecord from './messages/MemoryRecord.vue'
 import PersonaState from './messages/PersonaState.vue'
 import PlanResult from './messages/PlanResult.vue'
+import PlanningSessionCard from './messages/PlanningSessionCard.vue'
 import RagResult from './messages/RagResult.vue'
 import DataBlockResult from './messages/DataBlockResult.vue'
 import SystemStatus from './messages/SystemStatus.vue'
@@ -20,6 +22,8 @@ const renderers = {
   text: TextBubble,
   tool_result: TextBubble,
   approval_request: ApprovalCard,
+  clarify_request: ClarifyCard,
+  planning_session: PlanningSessionCard,
   execution_log: ExecutionLog,
   system_status: SystemStatus,
   desktop_screenshot: DesktopScreenshot,

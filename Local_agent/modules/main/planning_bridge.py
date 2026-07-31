@@ -1,8 +1,10 @@
-"""规划黑盒：自然语言任务 → clarify/env_probe/plan/run_graph；质询等人机交互进主对话时间线。"""
+"""规划黑盒：自然语言任务 → clarify/env_probe/plan/run_graph；UI 用单卡 planning_session 原地更新。"""
 
 from __future__ import annotations
 
 import logging
+import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Literal
 
@@ -22,8 +24,21 @@ from shared.local_bus import call
 
 logger = logging.getLogger(__name__)
 
-PushFn = Callable[[str, dict[str, Any]], Awaitable[None]]
-BridgeStatus = Literal["running", "awaiting_clarify", "done"]
+# push(msg_type, message, msg_id=None) -> message_id
+PushFn = Callable[..., Awaitable[str]]
+# update(msg_id, message) -> None
+UpdateFn = Callable[[str, dict[str, Any]], Awaitable[None]]
+BridgeStatus = Literal["running", "awaiting_clarify", "done", "cancelled"]
+Phase = Literal[
+    "collecting",
+    "clarifying",
+    "probing",
+    "planning",
+    "running",
+    "done",
+    "failed",
+    "cancelled",
+]
 
 
 @dataclass
@@ -31,52 +46,150 @@ class PlanningBridgeState:
     task: str
     request_id: str = ""
     tool_call_id: str = ""
+    session_id: str = "default"
     status: BridgeStatus = "running"
     round_index: int = 1
     history: list[ClarifyAnswer] = field(default_factory=list)
     env_records: list[EnvProbeRecord] = field(default_factory=list)
     env_blocks: list[DataBlock] = field(default_factory=list)
     pending_questions: list[ClarifyQuestion] = field(default_factory=list)
+    session_msg_id: str = ""
+    cancelled: bool = False
     final_result: ToolResultForModel | None = None
+    # 可变会话卡快照（patch 用）
+    card: dict[str, Any] = field(default_factory=dict)
 
 
 class PlanningBridge:
-    """由 main 持有；不把中间过程回灌主模型，只在结束时给出结构化结果。"""
+    """由 main 持有；中间过程只更新 planning_session 卡，最终结果回灌主模型。"""
 
-    def __init__(self, *, push: PushFn) -> None:
+    def __init__(self, *, push: PushFn, update: UpdateFn | None = None) -> None:
         self.push = push
+        self.update = update
 
-    async def start(self, task: str, *, request_id: str = "", tool_call_id: str = "") -> PlanningBridgeState:
-        state = PlanningBridgeState(task=task.strip(), request_id=request_id, tool_call_id=tool_call_id)
-        await self.push(
-            "text",
-            {
-                "text": f"已开始规划任务（程序接管，主模型等待最终结果）：\n{state.task}",
-                "role": "agent",
-                "request_id": request_id,
-            },
+    def request_cancel(self, state: PlanningBridgeState) -> None:
+        state.cancelled = True
+
+    def _cancelled(self, state: PlanningBridgeState) -> bool:
+        return bool(state.cancelled)
+
+    async def _sync_card(self, state: PlanningBridgeState, **patch: Any) -> None:
+        state.card.update(patch)
+        state.card.setdefault("request_id", state.request_id)
+        state.card.setdefault("session_id", state.session_id)
+        state.card.setdefault("goal", state.task)
+        state.card["can_cancel"] = state.card.get("phase") not in (
+            "done",
+            "failed",
+            "cancelled",
         )
+        if not state.session_msg_id:
+            return
+        if not self.update:
+            return
+        try:
+            await self.update(state.session_msg_id, dict(state.card))
+        except Exception:
+            logger.exception("planning_session update failed")
+
+    async def start(
+        self,
+        task: str,
+        *,
+        request_id: str = "",
+        tool_call_id: str = "",
+        session_id: str = "default",
+        on_state: Callable[[PlanningBridgeState], None] | None = None,
+    ) -> PlanningBridgeState:
+        rid = request_id or f"plan_{uuid.uuid4().hex[:12]}"
+        state = PlanningBridgeState(
+            task=task.strip(),
+            request_id=rid,
+            tool_call_id=tool_call_id or rid,
+            session_id=session_id or "default",
+        )
+        state.card = {
+            "ok": True,
+            "request_id": rid,
+            "session_id": state.session_id,
+            "goal": state.task,
+            "summary": "",
+            "status": "collecting",
+            "phase": "collecting",
+            "graph": None,
+            "node_status": {},
+            "questions": [],
+            "error": "",
+            "files": [],
+            "can_cancel": True,
+            "text": "已开始规划，正在收集信息…",
+        }
+        msg_id = f"main_plan_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+        state.session_msg_id = await self.push(
+            "planning_session",
+            dict(state.card),
+            msg_id=msg_id,
+        )
+        if on_state is not None:
+            on_state(state)
         return await self._advance(state)
 
-    async def provide_clarify_answers(self, state: PlanningBridgeState, user_text: str) -> PlanningBridgeState:
-        text = (user_text or "").strip()
-        if not text:
-            await self.push("text", {"text": "请回答上方质询后再继续。", "role": "agent"})
+    async def provide_clarify_answers(
+        self,
+        state: PlanningBridgeState,
+        user_text: str = "",
+        *,
+        answers: list[ClarifyAnswer] | None = None,
+    ) -> PlanningBridgeState:
+        if self._cancelled(state):
+            return await self._cancel(state)
+
+        resolved: list[ClarifyAnswer] = []
+        if answers:
+            by_id = {a.question_id: a for a in answers if (a.answer or "").strip()}
+            for q in state.pending_questions:
+                hit = by_id.get(q.id)
+                if hit is not None:
+                    resolved.append(
+                        ClarifyAnswer(
+                            question_id=q.id,
+                            answer=hit.answer.strip(),
+                            question=hit.question or q.prompt,
+                        )
+                    )
+            if not resolved:
+                resolved = [a for a in answers if (a.answer or "").strip()]
+        else:
+            text = (user_text or "").strip()
+            if not text:
+                return state
+            resolved = [
+                ClarifyAnswer(question_id=q.id, answer=text, question=q.prompt)
+                for q in state.pending_questions
+            ]
+            if not resolved:
+                resolved = [ClarifyAnswer(question_id="user", answer=text, question="用户补充")]
+
+        if not resolved:
             return state
-        answers = [
-            ClarifyAnswer(question_id=q.id, answer=text, question=q.prompt)
-            for q in state.pending_questions
-        ]
-        if not answers:
-            answers = [ClarifyAnswer(question_id="user", answer=text, question="用户补充")]
-        state.history.extend(answers)
+
+        state.history.extend(resolved)
         state.pending_questions = []
         state.status = "running"
         state.round_index += 1
+        await self._sync_card(
+            state,
+            phase="collecting",
+            status="collecting",
+            questions=[],
+            text="已收到补充信息，继续规划…",
+        )
         return await self._advance(state)
 
     async def _advance(self, state: PlanningBridgeState) -> PlanningBridgeState:
         while True:
+            if self._cancelled(state):
+                return await self._cancel(state)
             if state.round_index > MAX_COLLECT_ROUNDS:
                 return await self._fail(state, f"信息收集超过 {MAX_COLLECT_ROUNDS} 轮")
 
@@ -95,20 +208,20 @@ class PlanningBridge:
                 logger.exception("planning.clarify failed")
                 return await self._fail(state, f"质询失败: {exc}")
 
-            body = outcome.model_dump()
-            body["request_id"] = state.request_id
-            body["goal"] = state.task
-            body["round_index"] = state.round_index
-            if outcome.ready:
-                body["text"] = outcome.note or "信息已足够，准备出图"
-            elif outcome.questions:
-                body["text"] = f"质询 {len(outcome.questions)} 题" + (f"；探测 {len(outcome.env_queries)} 项" if outcome.env_queries else "")
-            else:
-                body["text"] = f"环境探测 {len(outcome.env_queries)} 项"
-            await self.push("clarify_result", body)
+            if self._cancelled(state):
+                return await self._cancel(state)
 
             if outcome.env_queries:
+                await self._sync_card(
+                    state,
+                    phase="probing",
+                    status="probing",
+                    text=f"环境探测 {len(outcome.env_queries)} 项…",
+                    questions=[],
+                )
                 await self._run_env_probes(state, outcome)
+                if self._cancelled(state):
+                    return await self._cancel(state)
 
             if outcome.ready:
                 return await self._plan_and_run(state)
@@ -116,23 +229,23 @@ class PlanningBridge:
             if outcome.questions:
                 state.pending_questions = list(outcome.questions)
                 state.status = "awaiting_clarify"
-                lines = ["规划需要补充信息（请直接回复；回复将作为本轮质询答案）：", ""]
-                for i, q in enumerate(outcome.questions, 1):
-                    choices = " / ".join(q.choices[:6])
-                    lines.append(f"{i}. {q.prompt}")
-                    if choices:
-                        lines.append(f"   选项：{choices}（也可自由回答）")
-                    if q.reason:
-                        lines.append(f"   原因：{q.reason}")
-                await self.push("text", {"text": "\n".join(lines), "role": "agent", "request_id": state.request_id})
+                await self._sync_card(
+                    state,
+                    phase="clarifying",
+                    status="clarifying",
+                    questions=[q.model_dump() for q in outcome.questions],
+                    round_index=state.round_index,
+                    text=f"规划需要补充信息（{len(outcome.questions)} 题）",
+                )
                 return state
 
             # 仅 env_probe 的一轮：继续下一轮 clarify
             state.round_index += 1
 
     async def _run_env_probes(self, state: PlanningBridgeState, outcome: ClarifyOutcome) -> None:
-        results: list[dict[str, Any]] = []
         for q in outcome.env_queries:
+            if self._cancelled(state):
+                return
             block_id = f"env_{q.id}"
             try:
                 rec, blk = await call(
@@ -158,24 +271,25 @@ class PlanningBridge:
             state.env_records.append(rec)
             if blk is not None:
                 state.env_blocks.append(blk)
-            results.append(
-                {
-                    "record": rec.model_dump(),
-                    "block": blk.model_dump() if blk is not None else None,
-                }
-            )
-        await self.push(
-            "env_probe_result",
-            {
-                "request_id": state.request_id,
-                "round_index": state.round_index,
-                "results": results,
-                "text": f"已完成 {len(results)} 项环境探测",
-            },
+
+        await self._sync_card(
+            state,
+            text=f"已完成 {len(outcome.env_queries)} 项环境探测",
         )
 
     async def _plan_and_run(self, state: PlanningBridgeState) -> PlanningBridgeState:
+        if self._cancelled(state):
+            return await self._cancel(state)
+
         effective_goal = compose_goal(state.task, state.history)
+        await self._sync_card(
+            state,
+            phase="planning",
+            status="planning",
+            goal=effective_goal,
+            questions=[],
+            text="正在生成任务图…",
+        )
         try:
             plan_out = await call(
                 "planning",
@@ -190,60 +304,54 @@ class PlanningBridge:
             logger.exception("planning.plan failed")
             return await self._fail(state, f"出图失败: {exc}")
 
+        if self._cancelled(state):
+            return await self._cancel(state)
+
         if not plan_out.ok or plan_out.graph is None:
-            await self.push(
-                "plan_result",
-                {
-                    "ok": False,
-                    "request_id": state.request_id,
-                    "goal": effective_goal,
-                    "summary": "",
-                    "status": "failed",
-                    "graph": None,
-                    "error": plan_out.error or "出图失败",
-                    "text": plan_out.error or "出图失败",
-                },
-            )
             return await self._fail(state, plan_out.error or "出图失败")
 
         graph = plan_out.graph
-        await self.push(
-            "plan_result",
-            {
-                "ok": True,
-                "request_id": state.request_id,
-                "goal": effective_goal,
-                "summary": graph.summary,
-                "status": "running",
-                "graph": graph.model_dump(by_alias=True),
-                "error": "",
-                "text": f"任务图已生成：{graph.summary or '（无摘要）'}，开始执行…",
-            },
+        node_status: dict[str, dict[str, Any]] = {
+            n.id: {"status": "pending", "attempts": 0, "error": "", "detail": ""}
+            for n in graph.nodes
+        }
+        await self._sync_card(
+            state,
+            ok=True,
+            goal=effective_goal,
+            summary=graph.summary,
+            status="running",
+            phase="running",
+            graph=graph.model_dump(by_alias=True),
+            node_status=node_status,
+            error="",
+            text=f"任务图已生成：{graph.summary or '（无摘要）'}",
         )
 
         def on_progress(node_id: str, status: str, attempts: int, detail: str) -> None:
-            # sync callback — schedule best-effort via create_task from caller loop
             import asyncio
 
+            node_status[node_id] = {
+                "status": status,
+                "attempts": attempts,
+                "error": detail if status == "failed" else "",
+                "detail": detail or "",
+            }
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
                 return
 
-            async def _push() -> None:
-                await self.push(
-                    "plan_progress",
-                    {
-                        "request_id": state.request_id,
-                        "node_id": node_id,
-                        "status": status,
-                        "attempts": attempts,
-                        "detail": detail,
-                        "text": f"[{status}] {node_id}: {detail}",
-                    },
+            async def _patch() -> None:
+                if self._cancelled(state):
+                    return
+                await self._sync_card(
+                    state,
+                    node_status=dict(node_status),
+                    text=f"{node_id} → {status}",
                 )
 
-            loop.create_task(_push())
+            loop.create_task(_patch())
 
         try:
             run = await call(
@@ -253,10 +361,25 @@ class PlanningBridge:
                 graph,
                 initial_blocks=list(state.env_blocks),
                 on_progress=on_progress,
+                cancel_check=lambda: self._cancelled(state),
             )
         except Exception as exc:
             logger.exception("run_graph failed")
             return await self._fail(state, f"执行图失败: {exc}")
+
+        if self._cancelled(state) or (run.error or "").startswith("用户取消"):
+            # 合并最终节点状态后标取消
+            for n in run.nodes or []:
+                raw = n.model_dump() if hasattr(n, "model_dump") else dict(n)
+                nid = str(raw.get("node_id") or "")
+                if nid:
+                    node_status[nid] = {
+                        "status": raw.get("status") or "skipped",
+                        "attempts": int(raw.get("attempts") or 0),
+                        "error": raw.get("error") or "",
+                        "detail": "",
+                    }
+            return await self._cancel(state, node_status=node_status, graph=graph, goal=effective_goal)
 
         files: list[str] = []
         for b in run.blocks or []:
@@ -268,6 +391,23 @@ class PlanningBridge:
                 for p in (meta.get("files_touched") if isinstance(meta, dict) else None) or []:
                     files.append(str(p))
 
+        for n in run.nodes or []:
+            raw = n.model_dump() if hasattr(n, "model_dump") else dict(n)
+            nid = str(raw.get("node_id") or "")
+            if not nid:
+                continue
+            node_status[nid] = {
+                "status": raw.get("status") or ("succeeded" if run.ok else "failed"),
+                "attempts": int(raw.get("attempts") or 0),
+                "error": raw.get("error") or "",
+                "detail": "",
+            }
+        for nid in run.skipped_node_ids or []:
+            node_status.setdefault(
+                str(nid),
+                {"status": "skipped", "attempts": 0, "error": "", "detail": ""},
+            )
+
         data = {
             "ok": run.ok,
             "goal": run.goal,
@@ -277,14 +417,23 @@ class PlanningBridge:
             "nodes": [n.model_dump() if hasattr(n, "model_dump") else n for n in (run.nodes or [])],
             "skipped_node_ids": list(run.skipped_node_ids or []),
         }
-        await self.push(
-            "graph_run_result",
-            {
-                **data,
-                "request_id": state.request_id,
-                "text": ("规划执行成功" if run.ok else f"规划执行失败: {run.error}")
-                + (f"；产出文件 {len(data['files'])} 个" if data["files"] else ""),
-            },
+        final_text = ("规划执行成功" if run.ok else f"规划执行失败: {run.error}") + (
+            f"；产出文件 {len(data['files'])} 个" if data["files"] else ""
+        )
+        await self._sync_card(
+            state,
+            ok=bool(run.ok),
+            goal=effective_goal,
+            summary=run.summary or graph.summary,
+            status="succeeded" if run.ok else "failed",
+            phase="done" if run.ok else "failed",
+            graph=graph.model_dump(by_alias=True),
+            node_status=node_status,
+            error="" if run.ok else (run.error or "执行失败"),
+            files=data["files"],
+            questions=[],
+            text=final_text,
+            can_cancel=False,
         )
         state.status = "done"
         state.final_result = ToolResultForModel(
@@ -293,6 +442,39 @@ class PlanningBridge:
             summary=run.summary or ("成功" if run.ok else run.error or "失败"),
             data=data,
             error="" if run.ok else (run.error or "graph run failed"),
+        )
+        return state
+
+    async def _cancel(
+        self,
+        state: PlanningBridgeState,
+        *,
+        node_status: dict[str, dict[str, Any]] | None = None,
+        graph: Any = None,
+        goal: str = "",
+    ) -> PlanningBridgeState:
+        state.cancelled = True
+        state.status = "cancelled"
+        err = "用户取消规划"
+        await self._sync_card(
+            state,
+            ok=False,
+            goal=goal or state.task,
+            status="cancelled",
+            phase="cancelled",
+            node_status=node_status or state.card.get("node_status") or {},
+            graph=graph.model_dump(by_alias=True) if graph is not None else state.card.get("graph"),
+            error=err,
+            questions=[],
+            text=err,
+            can_cancel=False,
+        )
+        state.final_result = ToolResultForModel(
+            ok=False,
+            tool="planning_run",
+            summary=err,
+            data={"ok": False, "goal": state.task, "files": [], "error": err, "cancelled": True},
+            error=err,
         )
         return state
 
@@ -305,8 +487,14 @@ class PlanningBridge:
             data={"ok": False, "goal": state.task, "files": [], "error": error},
             error=error,
         )
-        await self.push(
-            "text",
-            {"text": f"规划结束（失败）：{error}", "role": "agent", "request_id": state.request_id},
+        await self._sync_card(
+            state,
+            ok=False,
+            status="failed",
+            phase="failed",
+            error=error,
+            questions=[],
+            text=f"规划结束（失败）：{error}",
+            can_cancel=False,
         )
         return state

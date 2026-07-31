@@ -39,6 +39,11 @@ export function messageSummary(msg) {
     return msg.message?.ok ? '安全规则已更新' : '安全规则配置失败'
   }
   if (msg.msg_type === 'plan_result') return msg.message?.goal || msg.message?.summary || '任务规划'
+  if (msg.msg_type === 'planning_session') {
+    return msg.message?.text || msg.message?.goal || '任务规划'
+  }
+  if (msg.msg_type === 'clarify_request') return msg.message?.text || '规划质询'
+  if (msg.msg_type === 'planning_action') return '规划操作'
   if (msg.msg_type === 'clarify_result') {
     return msg.message?.ready ? '信息已足够' : msg.message?.note || '质询'
   }
@@ -68,10 +73,148 @@ export function countsAsUnread(msg) {
     msg.msg_type !== 'security_lists_result' &&
     msg.msg_type !== 'plan_progress' &&
     msg.msg_type !== 'clarify_result' &&
-    msg.msg_type !== 'env_probe_result'
+    msg.msg_type !== 'env_probe_result' &&
+    msg.msg_type !== 'graph_run_result' &&
+    msg.msg_type !== 'planning_action'
   )
 }
 
+/** 主对话中不单独展示的规划中间事件 */
+const PLANNING_HIDDEN_TYPES = new Set([
+  'plan_progress',
+  'clarify_result',
+  'env_probe_result',
+  'graph_run_result',
+  'planning_action',
+])
+
+/**
+ * 折叠规划进度；优先展示 planning_session 单卡。
+ * @param {UiMessage[]} messages
+ * @returns {UiMessage[]}
+ */
+export function prepareChatMessages(messages) {
+  if (!Array.isArray(messages) || !messages.length) return []
+
+  /** @type {Record<string, Record<string, { status: string, attempts?: number, error?: string, detail?: string }>>} */
+  const progressByReq = {}
+  /** @type {Record<string, object>} */
+  const finalNodeStatusByReq = {}
+  /** @type {Record<string, UiMessage>} */
+  const bestPlanByReq = {}
+  /** @type {Set<string>} */
+  const sessionReqIds = new Set()
+
+  for (const msg of messages) {
+    const rid = msg.message?.request_id
+    if (!rid) continue
+
+    if (msg.msg_type === 'planning_session') {
+      sessionReqIds.add(rid)
+      continue
+    }
+
+    if (msg.msg_type === 'plan_progress') {
+      if (!progressByReq[rid]) progressByReq[rid] = {}
+      const nid = msg.message?.node_id
+      if (nid) {
+        progressByReq[rid][nid] = {
+          status: msg.message.status || 'pending',
+          attempts: msg.message.attempts || 0,
+          error: msg.message.status === 'failed' ? msg.message.detail || '' : '',
+          detail: msg.message.detail || '',
+        }
+      }
+      continue
+    }
+
+    if (msg.msg_type === 'graph_run_result' && msg.message?.node_status) {
+      finalNodeStatusByReq[rid] = msg.message.node_status
+      continue
+    }
+
+    if (msg.msg_type === 'plan_result') {
+      const prev = bestPlanByReq[rid]
+      const score = (m) => {
+        let s = m.timestamp || 0
+        if (m.message?.graph?.nodes?.length) s += 1e12
+        if (['done', 'succeeded', 'failed', 'cancelled'].includes(m.message?.phase || m.message?.status)) {
+          s += 1e11
+        }
+        return s
+      }
+      if (!prev || score(msg) >= score(prev)) {
+        bestPlanByReq[rid] = msg
+      }
+    }
+  }
+
+  const usedPlanIds = new Set()
+  const out = []
+
+  for (const msg of messages) {
+    if (PLANNING_HIDDEN_TYPES.has(msg.msg_type)) continue
+
+    // 有 planning_session 时隐藏同 request 的旧 plan_result / clarify_request
+    const rid = msg.message?.request_id
+    if (rid && sessionReqIds.has(rid)) {
+      if (msg.msg_type === 'plan_result' || msg.msg_type === 'clarify_request') continue
+    }
+
+    if (msg.msg_type === 'plan_result') {
+      if (!rid) {
+        out.push(msg)
+        continue
+      }
+      const best = bestPlanByReq[rid]
+      if (!best || best.id !== msg.id) continue
+      if (usedPlanIds.has(rid)) continue
+      usedPlanIds.add(rid)
+
+      const live = progressByReq[rid] || {}
+      const finals = finalNodeStatusByReq[rid] || {}
+      const embedded = best.message?.node_status || {}
+      const node_status = { ...embedded, ...live, ...finals }
+      out.push({
+        ...best,
+        message: {
+          ...best.message,
+          node_status,
+        },
+      })
+      continue
+    }
+
+    out.push(msg)
+  }
+
+  return out
+}
+
+/** @param {UiMessage[]} messages @param {{ id: string, names?: string[] }} agent */
+export function hasPendingClarify(messages, agent) {
+  return messages.some((m) => {
+    if (!belongsToAgent(m, agent)) return false
+    if (m.msg_type === 'clarify_request' && m.status === 'pending') return true
+    if (
+      m.msg_type === 'planning_session' &&
+      (m.message?.phase === 'clarifying' || m.message?.status === 'clarifying') &&
+      (m.message?.questions || []).length > 0
+    ) {
+      return true
+    }
+    return false
+  })
+}
+
+/** 规划会话进行中（含收集/执行），用于禁用输入 */
+export function hasActivePlanningSession(messages, agent) {
+  return messages.some((m) => {
+    if (!belongsToAgent(m, agent) || m.msg_type !== 'planning_session') return false
+    const phase = m.message?.phase || m.message?.status
+    return !['done', 'failed', 'cancelled', 'succeeded'].includes(phase)
+  })
+}
 /** @param {UiMessage[]} messages @param {{ id: string }} agent */
 export function hasEnvAlert(messages, agent) {
   if (agent.id !== 'env') return false
@@ -97,7 +240,17 @@ export function isAgentWorking(messages, agent) {
   const age = Date.now() / 1000 - recent.timestamp
   if (recent.msg_type === 'execution_log' && recent.message?.status === 'running') return true
   if (recent.msg_type === 'plan_progress' && recent.message?.status === 'running') return true
-  if (['execution_log', 'rag_result', 'datablock', 'plan_result', 'graph_run_result'].includes(recent.msg_type) && age < 30) return true
+  if (
+    recent.msg_type === 'planning_session' &&
+    !['done', 'failed', 'cancelled', 'succeeded'].includes(recent.message?.phase || recent.message?.status)
+  ) {
+    return true
+  }
+  if (recent.msg_type === 'plan_result' && ['running', 'collecting'].includes(recent.message?.phase || recent.message?.status)) {
+    return true
+  }
+  if (recent.msg_type === 'clarify_request' && recent.status === 'pending') return true
+  if (['execution_log', 'rag_result', 'datablock', 'plan_result', 'graph_run_result', 'planning_session'].includes(recent.msg_type) && age < 30) return true
   if (recent.msg_type !== 'system_status' && recent.msg_type !== 'persona_state' && age < 12) {
     return true
   }
@@ -283,14 +436,53 @@ export function executorMessageMode(msg) {
   return null
 }
 
-/** 执行频道主区：该智能体的对话与执行日志（不再按子能力 Tab 分流） */
+/** 执行频道主区：该智能体的对话与执行日志（同 job_id 折叠为一条） */
 /** @param {UiMessage[]} messages @param {{ id: string, names: string[] }} agent */
 export function executorWorkspaceMessages(messages, agent) {
-  return messages.filter(
+  const filtered = messages.filter(
     (m) =>
       belongsToAgent(m, agent) &&
       (m.msg_type === 'text' || m.msg_type === 'execution_log'),
   )
+  return collapseExecutionLogsByJob(filtered)
+}
+
+/**
+ * 同一 job_id 的 execution_log 只保留最新一条（兼容历史刷屏数据）。
+ * @param {UiMessage[]} messages
+ */
+export function collapseExecutionLogsByJob(messages) {
+  /** @type {Map<string, UiMessage>} */
+  const bestByJob = new Map()
+  /** @type {Array<{ kind: 'raw', msg: UiMessage } | { kind: 'job', jobId: string }>} */
+  const slots = []
+
+  for (const m of messages) {
+    if (m.msg_type !== 'execution_log') {
+      slots.push({ kind: 'raw', msg: m })
+      continue
+    }
+    const jobId = m.message?.payload?.job_id
+    if (!jobId) {
+      slots.push({ kind: 'raw', msg: m })
+      continue
+    }
+    const prev = bestByJob.get(jobId)
+    if (!prev) {
+      slots.push({ kind: 'job', jobId })
+      bestByJob.set(jobId, m)
+      continue
+    }
+    const prevDone = ['completed', 'failed', 'cancelled'].includes(prev.message?.status)
+    const nextDone = ['completed', 'failed', 'cancelled'].includes(m.message?.status)
+    if (nextDone || (!prevDone && (m.timestamp || 0) >= (prev.timestamp || 0))) {
+      bestByJob.set(jobId, m)
+    } else if ((m.timestamp || 0) > (prev.timestamp || 0)) {
+      bestByJob.set(jobId, m)
+    }
+  }
+
+  return slots.map((s) => (s.kind === 'job' ? bestByJob.get(s.jobId) : s.msg)).filter(Boolean)
 }
 
 /** 执行频道：附带独立 file_content 字段的用户消息（路径仍由模型从 text 解析） */

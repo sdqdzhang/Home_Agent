@@ -1,7 +1,8 @@
-# 主对话与会话管理（第一版设计）
+# 主对话与会话管理
 
-> 状态：骨架已落地；主对话 FC 循环与 Analyzer LLM 尚未接通。  
-> 模块：`main`、`conversation_manager`（id 不再使用 jarvis）。
+> 状态：**已接通**。main FC 循环、`conversation.analyze` Analyzer、planning 黑盒桥接、记忆候选 `observe` 均已落地。  
+> 模块：`main`、`conversation_manager`（id 不再使用 jarvis）。  
+> 待办：扩展模块即插即用扫描、Open Tasks「继续」语义增强等（见文末清单）。
 
 ## 1. 职责切分
 

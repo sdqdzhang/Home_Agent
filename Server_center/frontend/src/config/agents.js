@@ -18,7 +18,16 @@ export const AGENTS = [
     defaultMood: '平静',
     icon: '◉',
     description: '主对话：聊天 + Function Calling 编排（规划/执行/RAG/环境/扩展）',
-    defaultMsgTypes: ['text', 'tool_result', 'plan_result', 'clarify_result', 'plan_progress', 'graph_run_result'],
+    defaultMsgTypes: [
+      'text',
+      'tool_result',
+      'planning_session',
+      'clarify_request',
+      'plan_result',
+      'clarify_result',
+      'plan_progress',
+      'graph_run_result',
+    ],
   },
   {
     id: 'conversation_manager',

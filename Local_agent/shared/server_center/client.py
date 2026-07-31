@@ -83,13 +83,24 @@ class ServerCenterClient:
             "timestamp": int(time.time()),
         }
 
-    async def _post_encrypted(self, path: str, payload: dict[str, Any], *, timeout: float = 120.0) -> dict[str, Any]:
+    async def _post_encrypted(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        timeout: float = 120.0,
+        method: str = "POST",
+    ) -> dict[str, Any]:
         server_key = await self._fetch_server_public_key()
         plaintext = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         encrypted_body = encrypt_payload_b64(plaintext, server_key)
         chunk_count = len(encrypted_body.get("encrypted_chunks") or []) or 1
         async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(f"{self.base_url}{path}", json=encrypted_body)
+            url = f"{self.base_url}{path}"
+            if method.upper() == "PATCH":
+                resp = await client.patch(url, json=encrypted_body)
+            else:
+                resp = await client.post(url, json=encrypted_body)
             resp.raise_for_status()
             result = resp.json()
             result["_encrypted_chunks"] = chunk_count
@@ -167,3 +178,20 @@ class ServerCenterClient:
             "timestamp": int(time.time()),
         }
         return await self._post_encrypted(f"/api/v1/messages/{ref_id}/respond", payload)
+
+    async def update_message(
+        self,
+        message_id: str,
+        *,
+        message: dict[str, Any] | None = None,
+        status: str | None = None,
+        timestamp: int | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if message is not None:
+            payload["message"] = message
+        if status is not None:
+            payload["status"] = status
+        if timestamp is not None:
+            payload["timestamp"] = int(timestamp)
+        return await self._post_encrypted(f"/api/v1/messages/{message_id}", payload, method="PATCH")
