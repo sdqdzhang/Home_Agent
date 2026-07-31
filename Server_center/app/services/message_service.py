@@ -97,6 +97,8 @@ class MessageService:
             approved = response.message.get("approved")
             if response.msg_type == "approval_response" and isinstance(approved, bool):
                 record.status = "approved" if approved else "rejected"
+            elif response.msg_type == "clarify_response":
+                record.status = "answered"
             else:
                 record.status = "handled"
 
@@ -110,6 +112,36 @@ class MessageService:
         await ws_manager.broadcast(record.target, {"event": "message_updated", "data": data})
         await ws_manager.broadcast(record.name, {"event": "response_ready", "data": data})
         if data["channel"] not in (record.target, record.name):
+            await ws_manager.broadcast(data["channel"], {"event": "message_updated", "data": data})
+        return data
+
+    async def update_message(
+        self,
+        message_id: str,
+        *,
+        message: dict[str, Any] | None = None,
+        status: str | None = None,
+        timestamp: int | None = None,
+    ) -> dict[str, Any]:
+        now = utc_now()
+        with SessionLocal() as db:
+            record = db.get(MessageRecord, message_id)
+            if not record:
+                raise ValueError(f"Message not found: {message_id}")
+            if message is not None:
+                record.message_json = json.dumps(message, ensure_ascii=False)
+            if status is not None:
+                record.status = status
+            if timestamp is not None:
+                record.timestamp = int(timestamp)
+            record.updated_at = now
+            db.commit()
+            db.refresh(record)
+            data = record_to_dict(record)
+
+        data["channel"] = resolve_channel(record.name, record.target)
+        await ws_manager.broadcast(record.target, {"event": "message_updated", "data": data})
+        if data["channel"] and data["channel"] != record.target:
             await ws_manager.broadcast(data["channel"], {"event": "message_updated", "data": data})
         return data
 

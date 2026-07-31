@@ -73,6 +73,26 @@ export async function respondMessage(messageId, approved, reason = '') {
   return res.json()
 }
 
+/** 规划质询卡片提交 */
+export async function respondClarify(messageId, payload) {
+  const body = {
+    ref_id: messageId,
+    msg_type: 'clarify_response',
+    message: payload,
+    timestamp: Math.floor(Date.now() / 1000),
+  }
+  const res = await fetch(`/api/v1/messages/${messageId}/respond/local`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || `提交质询失败: ${res.status}`)
+  }
+  return res.json()
+}
+
 export function connectWebSocket(target, handlers) {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
   const ws = new WebSocket(`${protocol}//${location.host}/ws/${target}`)

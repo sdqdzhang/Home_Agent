@@ -4,7 +4,7 @@
 
 设计见 [docs/main-conversation.md](../../docs/main-conversation.md) 与 [INTEGRATION.md](INTEGRATION.md)。
 
-## 能力（骨架）
+## 能力
 
 | API | 说明 |
 |-----|------|
@@ -12,4 +12,4 @@
 | `get_snapshot` / `context_for_main` | 指标与注入主模型的 State/Summary |
 | UI `cm_snapshot` | 工作台展示规则命中、token 压力、State、Open Tasks 等 |
 
-Analyzer 与记忆落库尚未接 LLM。
+规则命中后走 Analyzer LLM（`conversation.analyze`）；产出的 Memory Candidates 经本模块调用 `memory.observe` 落库（不对 main FC 开放）。

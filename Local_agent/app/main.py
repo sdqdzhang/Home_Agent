@@ -89,8 +89,8 @@ def _dedupe_ws_handler(handler, *, ttl_seconds: float = 120):
         import time
 
         status = data.get("status")
-        # 审批结果（approved/rejected）必须与 pending 的 new_message 分开处理，否则会吞掉放行信号
-        if status in ("approved", "rejected"):
+        # 审批/质询结果必须与 pending 的 new_message 分开处理，否则会吞掉放行信号
+        if status in ("approved", "rejected", "answered", "handled"):
             await handler(data)
             return
 

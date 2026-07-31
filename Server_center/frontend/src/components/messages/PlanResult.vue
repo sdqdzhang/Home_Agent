@@ -1,5 +1,8 @@
 <script setup>
-defineProps({
+import { computed } from 'vue'
+import TaskGraphCanvas from '../planning/TaskGraphCanvas.vue'
+
+const props = defineProps({
   msg: { type: Object, required: true },
 })
 
@@ -7,18 +10,28 @@ function formatTime(ts) {
   return new Date(ts * 1000).toLocaleTimeString('zh-CN')
 }
 
-function nodeLine(node) {
-  if (!node) return ''
-  if (node.kind === 'process') {
-    return `${node.id} [process/${node.output?.type || '?'}] ${node.requirement || ''}`
-  }
-  return `${node.id} [action/${node.output?.type || '?'}] ${node.instruction || ''}`
-}
+const body = computed(() => props.msg.message || {})
+const graph = computed(() => body.value.graph || null)
+const nodeStatus = computed(() => body.value.node_status || {})
+const phase = computed(() => body.value.phase || body.value.status || '')
 
-function inputLabel(inp) {
-  const from = inp.from || inp.from_node || '?'
-  return `${from}:${inp.role || '?'}`
-}
+const phaseLabel = computed(() => {
+  const p = phase.value
+  if (p === 'collecting') return '收集信息'
+  if (p === 'running' || p === 'planned') return '执行中'
+  if (p === 'done' || p === 'succeeded') return '已完成'
+  if (p === 'failed') return '失败'
+  if (p === 'draft') return '草稿'
+  return p || '规划'
+})
+
+const statusClass = computed(() => {
+  const p = phase.value
+  if (p === 'failed' || body.value.ok === false) return 'bg-red-500/20 text-red-300'
+  if (p === 'done' || p === 'succeeded') return 'bg-emerald-500/20 text-emerald-300'
+  if (p === 'running' || p === 'collecting') return 'bg-amber-500/20 text-amber-200'
+  return 'bg-slate-500/20 text-slate-300'
+})
 </script>
 
 <template>
@@ -26,67 +39,38 @@ function inputLabel(inp) {
     <div class="rounded-xl border border-sky-500/30 bg-sky-500/5 px-4 py-3">
       <div class="flex items-center justify-between gap-2">
         <p class="text-xs font-medium text-sky-300">任务规划</p>
-        <span
-          v-if="msg.message?.status"
-          class="rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide"
-          :class="
-            msg.message.status === 'failed'
-              ? 'bg-red-500/20 text-red-300'
-              : msg.message.status === 'draft'
-                ? 'bg-sky-500/20 text-sky-200'
-                : 'bg-slate-500/20 text-slate-300'
-          "
-        >
-          {{ msg.message.status }}
+        <span class="rounded px-1.5 py-0.5 text-[10px] tracking-wide" :class="statusClass">
+          {{ phaseLabel }}
         </span>
       </div>
 
-      <p v-if="msg.message?.ok === false && msg.message?.error" class="mt-2 text-sm text-red-300">
-        {{ msg.message.error }}
+      <p v-if="body.ok === false && body.error" class="mt-2 text-sm text-red-300">
+        {{ body.error }}
       </p>
 
-      <p v-if="msg.message?.goal" class="mt-2 whitespace-pre-wrap text-sm font-medium text-slate-200">
-        目标：{{ msg.message.goal }}
+      <p v-if="body.goal" class="mt-2 whitespace-pre-wrap text-sm font-medium text-slate-200">
+        目标：{{ body.goal }}
       </p>
-      <p v-if="msg.message?.summary" class="mt-2 text-sm text-slate-300">
-        {{ msg.message.summary }}
+      <p v-if="body.summary" class="mt-2 text-sm text-slate-300">
+        {{ body.summary }}
+      </p>
+      <p v-else-if="body.text && !graph?.nodes?.length" class="mt-2 text-sm text-slate-400">
+        {{ body.text }}
       </p>
 
-      <!-- TaskGraph -->
-      <ol
-        v-if="msg.message?.graph?.nodes?.length"
-        class="mt-3 space-y-2 border-t border-sky-500/20 pt-2"
+      <div
+        v-if="graph?.nodes?.length"
+        class="mt-3 overflow-hidden rounded-lg border border-sky-500/20 bg-slate-950/40"
       >
-        <li
-          v-for="node in msg.message.graph.nodes"
-          :key="node.id"
-          class="text-sm text-slate-300"
-        >
-          <p class="font-medium text-slate-200">{{ nodeLine(node) }}</p>
-          <p v-if="node.inputs?.length" class="mt-0.5 text-xs text-slate-500">
-            ←
-            {{ node.inputs.map(inputLabel).join(' · ') }}
-          </p>
-        </li>
-      </ol>
+        <TaskGraphCanvas :graph="graph" :node-status="nodeStatus" compact />
+      </div>
 
-      <!-- 旧 steps 兼容 -->
-      <ol
-        v-else-if="msg.message?.steps?.length"
-        class="mt-3 space-y-1 border-t border-sky-500/20 pt-2"
+      <p
+        v-if="body.files?.length"
+        class="mt-2 text-xs text-slate-500"
       >
-        <li
-          v-for="(step, i) in msg.message.steps"
-          :key="i"
-          class="text-sm text-slate-300"
-        >
-          <span class="text-slate-500">{{ i + 1 }}.</span>
-          {{ step.title || step.action || step }}
-          <span v-if="step.target_module" class="ml-1 text-xs text-sky-300/80">
-            → {{ step.target_module }}
-          </span>
-        </li>
-      </ol>
+        产出文件 {{ body.files.length }} 个
+      </p>
 
       <p class="mt-2 text-xs text-slate-500">{{ formatTime(msg.timestamp) }}</p>
     </div>

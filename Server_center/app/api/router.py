@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.modules import MODULES, module_to_dict, resolve_module
 from app.crypto.rsa import decrypt_payload_b64, encrypt_payload_b64, public_key_to_pem
-from app.models.message import ClientRegistration, EncryptedPayload, InboundMessage, ResponseBody
+from app.models.message import ClientRegistration, EncryptedPayload, InboundMessage, MessageUpdateBody, ResponseBody
 from app.services.message_service import message_service
 from app.services.terminal_relay import terminal_relay
 
@@ -127,6 +127,37 @@ async def respond_message(message_id: str, body: EncryptedPayload) -> dict:
 async def respond_message_local(message_id: str, body: ResponseBody) -> dict:
     """Plaintext respond endpoint for the built-in web UI (same origin)."""
     return await _handle_response(message_id, body)
+
+
+async def _handle_update(message_id: str, body: MessageUpdateBody) -> dict:
+    try:
+        data = await message_service.update_message(
+            message_id,
+            message=body.message,
+            status=body.status,
+            timestamp=body.timestamp,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"ok": True, "message": data}
+
+
+@router.patch("/messages/{message_id}")
+async def update_message(message_id: str, body: EncryptedPayload) -> dict:
+    from app.main import server_private_key
+
+    try:
+        raw = decrypt_payload_b64(body.model_dump(exclude_none=True), server_private_key)
+        update = MessageUpdateBody.model_validate_json(raw)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid encrypted update: {exc}") from exc
+    return await _handle_update(message_id, update)
+
+
+@router.patch("/messages/{message_id}/local")
+async def update_message_local(message_id: str, body: MessageUpdateBody) -> dict:
+    """Plaintext update for local agent / same-origin tooling."""
+    return await _handle_update(message_id, body)
 
 
 @router.get("/terminal/status")

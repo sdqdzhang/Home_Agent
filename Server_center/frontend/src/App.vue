@@ -24,6 +24,8 @@ import {
   buildScreenshotRequest,
   buildCameraRequest,
   globalEmotionMood,
+  hasPendingClarify,
+  prepareChatMessages,
   sortMessagesAsc,
 } from './utils/messages.js'
 
@@ -49,7 +51,13 @@ let pollTimer = null
 const selectedAgent = computed(() => agents.find((a) => a.id === selectedAgentId.value) || agents[0])
 
 const chatMessages = computed(() =>
-  sortMessagesAsc(allMessages.value.filter((m) => belongsToAgent(m, selectedAgent.value))),
+  prepareChatMessages(
+    sortMessagesAsc(allMessages.value.filter((m) => belongsToAgent(m, selectedAgent.value))),
+  ),
+)
+
+const clarifyPending = computed(
+  () => selectedAgentId.value === 'main' && hasPendingClarify(allMessages.value, selectedAgent.value),
 )
 
 const currentMood = computed(() => agentMood(allMessages.value, selectedAgent.value))
@@ -430,7 +438,12 @@ onUnmounted(() => {
           :agent="selectedAgent"
           @responded="onResponded"
         />
-        <ChatInput v-if="selectedAgentId !== 'security'" @send="onSend" />
+        <ChatInput
+          v-if="selectedAgentId !== 'security'"
+          :disabled="clarifyPending"
+          :placeholder="clarifyPending ? '请在上方质询卡片中作答…' : undefined"
+          @send="onSend"
+        />
       </template>
     </main>
   </div>

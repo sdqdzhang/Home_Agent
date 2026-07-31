@@ -8,7 +8,11 @@ const props = defineProps({
   initialBlocks: { type: Array, default: () => [] },
   /** @type {Record<string, { status: string, attempts?: number, error?: string }>} */
   nodeStatus: { type: Object, default: () => ({}) },
+  /** 主对话内嵌时缩小高度 */
+  compact: { type: Boolean, default: false },
 })
+
+defineEmits(['node-click'])
 
 const GOAL_ID = 'goal'
 const NODE_W = 200
@@ -22,27 +26,39 @@ const scale = ref(1)
 const pan = ref({ x: 0, y: 0 })
 const drag = ref(null)
 
-const STATUS_FILL = {
-  pending: '#1e293b',
-  running: '#422006',
-  succeeded: '#14532d',
-  failed: '#450a0a',
-  skipped: '#334155',
+/** 种类底色：执行=橙，处理=青绿，目标=蓝，环境=紫 */
+const KIND_FILL = {
+  goal: '#0c4a6e',
+  env: '#4c1d95',
+  process: '#134e4a',
+  action: '#7c2d12',
+}
+const KIND_FILL_MUTED = {
+  goal: '#082f49',
+  env: '#2e1065',
+  process: '#042f2e',
+  action: '#431407',
+}
+const KIND_ACCENT = {
+  goal: '#38bdf8',
+  env: '#a78bfa',
+  process: '#2dd4bf',
+  action: '#fb923c',
 }
 const STATUS_STROKE = {
-  pending: '#64748b',
+  pending: null,
   running: '#eab308',
   succeeded: '#22c55e',
   failed: '#ef4444',
-  skipped: '#94a3b8',
-}
-const KIND_STROKE = {
-  goal: '#38bdf8',
-  env: '#a78bfa',
-  process: '#4ade80',
-  action: '#fb923c',
+  skipped: '#64748b',
 }
 
+const KIND_LABEL = {
+  goal: '目标',
+  env: '环境',
+  process: '处理',
+  action: '执行',
+}
 const STATUS_LABEL = {
   pending: '等待',
   running: '执行中',
@@ -51,7 +67,14 @@ const STATUS_LABEL = {
   skipped: '跳过',
 }
 
-function wrap(text, maxChars = 24, maxLines = 3) {
+const KIND_LEGEND = [
+  { kind: 'action', label: '执行' },
+  { kind: 'process', label: '处理' },
+  { kind: 'goal', label: '目标' },
+  { kind: 'env', label: '环境' },
+]
+
+function wrap(text, maxChars = 22, maxLines = 2) {
   const raw = String(text || '')
     .replace(/\s+/g, ' ')
     .trim()
@@ -71,10 +94,19 @@ function wrap(text, maxChars = 24, maxLines = 3) {
 
 function nodeCaption(node) {
   if (!node) return ''
-  if (node.kind === 'process') {
-    return `${node.id}  [process/${node.output?.type || '?'}]\n${wrap(node.requirement)}`
-  }
-  return `${node.id}  [action/${node.output?.type || '?'}]\n${wrap(node.instruction)}`
+  const kind = node.kind || 'action'
+  const outType = node.output?.type || '?'
+  const body = kind === 'process' ? wrap(node.requirement) : wrap(node.instruction)
+  return `${node.id} · ${outType}${body ? `\n${body}` : ''}`
+}
+
+function colorsFor(kind, status) {
+  const k = KIND_ACCENT[kind] ? kind : 'action'
+  let fill = KIND_FILL[k]
+  if (status === 'pending' || status === 'skipped') fill = KIND_FILL_MUTED[k]
+  if (status === 'failed') fill = '#450a0a'
+  const stroke = STATUS_STROKE[status] || KIND_ACCENT[k]
+  return { fill, stroke, accent: KIND_ACCENT[k] }
 }
 
 const layout = computed(() => {
@@ -83,7 +115,6 @@ const layout = computed(() => {
     return { nodes: [], edges: [], width: 400, height: 200 }
   }
 
-  const nodeIds = new Set(graph.nodes.map((n) => n.id))
   const preds = Object.fromEntries(graph.nodes.map((n) => [n.id, []]))
   const succ = { [GOAL_ID]: [] }
   const indeg = Object.fromEntries(graph.nodes.map((n) => [n.id, 0]))
@@ -130,7 +161,7 @@ const layout = computed(() => {
 
   const byLevel = { 0: [GOAL_ID] }
   const kinds = { [GOAL_ID]: 'goal' }
-  const labels = { [GOAL_ID]: 'goal\n(用户目标)' }
+  const labels = { [GOAL_ID]: 'goal · 用户目标' }
 
   const referenced = new Set()
   for (const n of graph.nodes) {
@@ -143,7 +174,7 @@ const layout = computed(() => {
     if (!referenced.has(b.id)) continue
     byLevel[0].push(b.id)
     kinds[b.id] = 'env'
-    labels[b.id] = b.label || `${b.id}\n[env]`
+    labels[b.id] = b.label || `${b.id} · 环境块`
     level[b.id] = 0
   }
   for (const n of graph.nodes) {
@@ -197,17 +228,20 @@ const layout = computed(() => {
     if (!isInitial) {
       let tag = STATUS_LABEL[status] || status
       if ((status === 'running' || status === 'failed') && attempts > 0) tag = `${tag} #${attempts}`
-      caption = `${caption}\n[${tag}]`
+      caption = `${caption}\n${tag}`
     }
+    const { fill, stroke, accent } = colorsFor(kind, status)
     return {
       id,
       kind,
+      kindLabel: KIND_LABEL[kind] || kind,
       status,
       x: pos[id].x,
       y: pos[id].y,
       caption,
-      fill: STATUS_FILL[status] || STATUS_FILL.pending,
-      stroke: isInitial ? KIND_STROKE[kind] : STATUS_STROKE[status] || KIND_STROKE[kind],
+      fill,
+      stroke,
+      accent,
     }
   })
 
@@ -276,8 +310,8 @@ onMounted(resetView)
 </script>
 
 <template>
-  <div class="flex h-full min-h-[280px] flex-col">
-    <div class="mb-2 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+  <div class="flex h-full flex-col" :class="compact ? 'min-h-[220px]' : 'min-h-[280px]'">
+    <div v-if="!compact" class="mb-2 flex flex-wrap items-center gap-2 text-xs text-slate-400">
       <button
         type="button"
         class="rounded border border-edge px-2 py-0.5 hover:bg-white/5"
@@ -301,6 +335,36 @@ onMounted(resetView)
       </button>
       <span>{{ Math.round(scale * 100) }}%</span>
       <span class="text-slate-500">滚轮缩放 · 中键/右键拖动</span>
+      <span class="mx-1 text-slate-600">|</span>
+      <span
+        v-for="item in KIND_LEGEND"
+        :key="item.kind"
+        class="inline-flex items-center gap-1"
+      >
+        <span
+          class="inline-block h-2.5 w-2.5 rounded-sm"
+          :style="{ background: KIND_ACCENT[item.kind] }"
+        />
+        {{ item.label }}
+      </span>
+    </div>
+    <div
+      v-else
+      class="mb-1 flex flex-wrap items-center gap-2 text-[10px] text-slate-500"
+    >
+      <button type="button" class="rounded border border-edge px-1.5 py-0.5 hover:bg-white/5" @click="zoom(1.15)">＋</button>
+      <button type="button" class="rounded border border-edge px-1.5 py-0.5 hover:bg-white/5" @click="zoom(1 / 1.15)">－</button>
+      <span
+        v-for="item in KIND_LEGEND"
+        :key="item.kind"
+        class="inline-flex items-center gap-0.5"
+      >
+        <span
+          class="inline-block h-2 w-2 rounded-sm"
+          :style="{ background: KIND_ACCENT[item.kind] }"
+        />
+        {{ item.label }}
+      </span>
     </div>
     <div
       ref="canvasRef"
@@ -338,7 +402,12 @@ onMounted(resetView)
           >
             {{ e.role }}
           </text>
-          <g v-for="n in layout.nodes" :key="n.id">
+          <g
+            v-for="n in layout.nodes"
+            :key="n.id"
+            class="cursor-pointer"
+            @click.stop="$emit('node-click', n.id)"
+          >
             <rect
               :x="n.x"
               :y="n.y"
@@ -349,9 +418,26 @@ onMounted(resetView)
               :stroke="n.stroke"
               :stroke-width="n.status === 'running' ? 3 : 2"
             />
+            <rect
+              :x="n.x + 2"
+              :y="n.y + 10"
+              width="4"
+              :height="NODE_H - 20"
+              rx="2"
+              :fill="n.accent"
+            />
             <text
-              :x="n.x + NODE_W / 2"
-              :y="n.y + NODE_H / 2"
+              :x="n.x + 12"
+              :y="n.y + 16"
+              :fill="n.accent"
+              font-size="10"
+              font-weight="700"
+            >
+              {{ n.kindLabel }}
+            </text>
+            <text
+              :x="n.x + NODE_W / 2 + 2"
+              :y="n.y + NODE_H / 2 + 8"
               fill="#e2e8f0"
               font-size="11"
               text-anchor="middle"
@@ -360,8 +446,8 @@ onMounted(resetView)
               <tspan
                 v-for="(line, i) in n.caption.split('\n')"
                 :key="i"
-                :x="n.x + NODE_W / 2"
-                :dy="i === 0 ? -(n.caption.split('\n').length - 1) * 7 : 14"
+                :x="n.x + NODE_W / 2 + 2"
+                :dy="i === 0 ? -(n.caption.split('\n').length - 1) * 6.5 : 13"
               >
                 {{ line }}
               </tspan>

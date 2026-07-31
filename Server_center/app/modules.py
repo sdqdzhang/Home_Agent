@@ -17,7 +17,16 @@ MODULES: tuple[ModuleDef, ...] = (
         label="主对话",
         names=("main", "主对话"),
         description="主对话：聊天 + Function Calling 编排（规划/执行/RAG/环境/扩展）",
-        default_msg_types=("text", "tool_result", "plan_result", "clarify_result", "plan_progress", "graph_run_result"),
+        default_msg_types=(
+            "text",
+            "tool_result",
+            "planning_session",
+            "clarify_request",
+            "plan_result",
+            "clarify_result",
+            "plan_progress",
+            "graph_run_result",
+        ),
         icon="◉",
     ),
     ModuleDef(
@@ -142,7 +151,7 @@ def resolve_channel(name: str, target: str) -> str:
 
 
 def initial_status(msg_type: str) -> str:
-    if msg_type == "approval_request":
+    if msg_type in ("approval_request", "clarify_request"):
         return "pending"
     return "delivered"
 

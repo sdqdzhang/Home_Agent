@@ -1,6 +1,6 @@
 # Local Agent
 
-HomeAgent 本地智能体服务：单进程托管多个功能模块，通过 RSA 加密 HTTP 与 WebSocket 与 Server Center 通信，为 Web UI 提供爬取、环境感知、RAG、执行、安全审查、记忆等能力。
+HomeAgent 本地智能体服务：单进程托管多个功能模块，通过 RSA 加密 HTTP 与 WebSocket 与 Server Center 通信。主对话以 Function Calling 编排规划/执行/RAG/环境/爬取；经安全门禁落地本机动作，并配套记忆、会话状态与远程终端。
 
 **版本**：`0.2.0`（`app/main.py`）
 
@@ -20,12 +20,16 @@ flowchart TB
         TERM[terminal/bridge PTY]
 
         subgraph MOD["功能模块"]
+            MAIN[main]
+            CM[conversation_manager]
+            PL[planning]
             CR[crawler]
             EN[env]
             RG[rag]
             SEC[security]
             MEM[memory]
             EX[executor]
+            PR[processor]
         end
     end
 
@@ -40,18 +44,18 @@ flowchart TB
 
 | 模块 | ID | 职责 |
 |------|-----|------|
-| 网页爬取 | `crawler` | 自适应引擎爬取、过滤、模型判断与对话 |
-| 环境感知 | `env` | 20s 采集、10min 压缩总结、告警、截图/摄像头 |
-| RAG | `rag` | Chroma 向量库、多策略分块、检索问答 |
+| 主对话 | `main` | 聊天 + Function Calling 编排；调用 planning / executor / rag / env / crawler |
+| 会话管理 | `conversation_manager` | 程序驱动 State / Analyzer / Open Tasks；向 main 注入上下文；记忆候选写入 memory |
+| 规划 | `planning` | 质询/环境探测 → 静态 TaskGraph → 拓扑并发执行；主对话黑盒桥接 + Web 工作台 |
+| 执行 | `executor` | 自然语言自动路由子能力 → 安检 → 执行（命令 / 文件） |
+| 处理 | `processor` | 要求 + DataBlock 上下文 → 产出一个 DataBlock（供规划 Process 节点） |
 | 安全检查 | `security` | 四列表规则、黄/红审批、模型升红与自动审批 |
+| RAG | `rag` | Chroma 向量库、多策略分块、检索问答 |
 | 记忆 | `memory` | 观察打分、工作记忆、向量归档、三维检索、反思 |
-| 执行 | `executor` | 自然语言自动路由子能力 → 安检 → 执行 |
-| 处理 | `processor` | 要求 + DataBlock 上下文 → 产出一个 DataBlock |
+| 环境感知 | `env` | 周期采集、窗口压缩总结、告警、截图/摄像头 |
+| 网页爬取 | `crawler` | 自适应引擎爬取、过滤、模型判断与对话 |
 | LLM 配置 | `llm` / `local_agent` | SQLite 端点与槽位绑定，供 Web UI 管理 |
 | 远程终端 | — | Web 端 PTY 桥接（不经 AI 与安全检查） |
-| 规划 | `planning` | 目标→质询/探测→TaskGraph→执行；Web UI 工作台 + `local_bus` |
-| 主对话 | `main` | 聊天 + FC 编排（骨架）；见 [docs/main-conversation.md](docs/main-conversation.md) |
-| 会话管理 | `conversation_manager` | 程序驱动 State/Analyzer；指标工作台；非 FC 工具 |
 
 模块间同步调用走 `shared.local_bus`；需 UI 展示或审批留痕时走 `ServerCenterClient`。约定见 [docs/module-communication.md](docs/module-communication.md)。
 
@@ -77,11 +81,11 @@ Local_agent/
 │   ├── processor/              # 处理（要求 + DataBlock → DataBlock）
 │   ├── terminal/               # 远程终端 PTY 桥
 │   ├── planning/               # 规划（TaskGraph；见 INTEGRATION.md）
-│   ├── main/                   # 主对话（FC 编排骨架）
-│   └── conversation_manager/   # 会话管理（规则 + Analyzer 骨架）
+│   ├── main/                   # 主对话（FC 编排）
+│   └── conversation_manager/   # 会话管理（规则 + Analyzer + 记忆候选）
 ├── docs/
 │   ├── module-communication.md
-│   └── main-conversation.md    # 主对话 / Manager 第一版设计
+│   └── main-conversation.md    # 主对话 / Manager 设计与落地状态
 ├── data/                       # 运行时数据（勿提交）
 ├── keys/                       # 客户端 RSA 密钥（勿提交）
 ├── test/                       # tkinter 图形测试（见 test/README.md）
@@ -272,6 +276,9 @@ result = await call("executor", "execute", ExecuteRequest(
 | `security.judge` / `security.chat` / `security.auto_approve` | security | 升红判定 / 对话 / 自动审批 |
 | `memory.assess` / `memory.reflect` / `memory.summarize` / `memory.tag` / `memory.embed` | memory | 打分 / 反思 / 对话总结 / 标签 / 向量化 |
 | `executor.route` / `executor.parse` | executor | 子能力路由 / 动作解析 |
+| `planning.clarify` / `planning.plan` | planning | 质询 / 出图 |
+| `main.chat` | main | 主对话 Function Calling |
+| `conversation.analyze` | conversation_manager | Analyzer 更新 State / 记忆候选 |
 
 ### 代码调用
 
