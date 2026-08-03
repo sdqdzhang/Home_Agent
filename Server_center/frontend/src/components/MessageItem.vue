@@ -5,6 +5,7 @@ import DesktopScreenshot from './messages/DesktopScreenshot.vue'
 import ExecutionLog from './messages/ExecutionLog.vue'
 import MemoryRecord from './messages/MemoryRecord.vue'
 import PersonaState from './messages/PersonaState.vue'
+import MindSnapshot from './messages/MindSnapshot.vue'
 import PlanResult from './messages/PlanResult.vue'
 import PlanningSessionCard from './messages/PlanningSessionCard.vue'
 import RagResult from './messages/RagResult.vue'
@@ -29,6 +30,7 @@ const renderers = {
   desktop_screenshot: DesktopScreenshot,
   camera_capture: DesktopScreenshot,
   persona_state: PersonaState,
+  mind_snapshot: MindSnapshot,
   rag_result: RagResult,
   plan_result: PlanResult,
   clarify_result: TextBubble,

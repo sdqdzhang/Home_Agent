@@ -7,10 +7,6 @@ const props = defineProps({
 })
 
 const isUser = computed(() => isUserMessage(props.msg))
-
-function formatTime(ts) {
-  return new Date(ts * 1000).toLocaleTimeString('zh-CN')
-}
 </script>
 
 <template>
@@ -30,7 +26,6 @@ function formatTime(ts) {
       >
         <div v-for="(f, i) in msg.message.attachments" :key="i">📎 {{ f.name }} ({{ f.size }})</div>
       </div>
-      <p class="mt-1 text-right text-[10px] opacity-60">{{ formatTime(msg.timestamp) }}</p>
     </div>
   </div>
 </template>

@@ -7,6 +7,7 @@ import AgentSidebar from './components/AgentSidebar.vue'
 import ChatHeader from './components/ChatHeader.vue'
 import ChatInput from './components/ChatInput.vue'
 import ConversationManagerWorkspace from './components/ConversationManagerWorkspace.vue'
+import EmotionWorkspace from './components/EmotionWorkspace.vue'
 import CrawlerWorkspace from './components/CrawlerWorkspace.vue'
 import ExecutorWorkspace from './components/ExecutorWorkspace.vue'
 import EnvWorkspace from './components/EnvWorkspace.vue'
@@ -343,6 +344,15 @@ onUnmounted(() => {
         :messages="allMessages"
         :loading="loading"
         :agent="selectedAgent"
+        @error="onWorkspaceError"
+      />
+
+      <EmotionWorkspace
+        v-else-if="selectedAgentId === 'emotion'"
+        :messages="allMessages"
+        :loading="loading"
+        :agent="selectedAgent"
+        :live="wsConnected"
         @error="onWorkspaceError"
       />
 

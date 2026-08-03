@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
   buildCrawlFileText,
   downloadTextFile,
@@ -13,22 +13,49 @@ const props = defineProps({
 const open = ref(false)
 const saveHint = ref('')
 
-function formatTime(ts) {
-  return new Date(ts * 1000).toLocaleTimeString('zh-CN')
-}
+const toolLabel = computed(() => {
+  const tool = props.msg.message?.tool || props.msg.message?.payload?.tool || ''
+  if (tool === 'crawler_fetch') return '网页爬取'
+  if (tool === 'executor_run') return '执行'
+  return ''
+})
 
 const summary = computed(
   () => props.msg.message?.summary || props.msg.message?.text || '执行日志',
 )
+
 const lines = computed(() => {
-  const log = props.msg.message?.log || props.msg.message?.lines || props.msg.message?.text || ''
-  return Array.isArray(log) ? log.join('\n') : String(log)
+  const log = props.msg.message?.log || props.msg.message?.lines
+  if (Array.isArray(log) && log.length) return log.join('\n')
+  if (typeof log === 'string' && log.trim()) return log
+
+  const result = props.msg.message?.payload?.result
+  if (result && typeof result === 'object') {
+    const parts = []
+    if (result.stdout) parts.push(String(result.stdout).trim())
+    if (result.stderr) parts.push(`[stderr]\n${String(result.stderr).trim()}`)
+    if (result.reason) parts.push(`[reason] ${result.reason}`)
+    if (result.error) parts.push(`[error] ${result.error}`)
+    if (parts.length) return parts.join('\n\n')
+  }
+  return ''
 })
+
 const crawlResult = computed(() => {
   const result = props.msg.message?.payload?.result
-  return result && typeof result === 'object' ? result : null
+  return result && typeof result === 'object' && (result.content || result.title || result.url)
+    ? result
+    : null
 })
 const crawlContent = computed(() => String(crawlResult.value?.content || '').trim())
+
+watch(
+  () => props.msg.message?.status,
+  (status) => {
+    if (status === 'running') open.value = true
+  },
+  { immediate: true },
+)
 
 function onSaveCrawlFile() {
   if (!crawlContent.value) return
@@ -46,13 +73,13 @@ function onSaveCrawlFile() {
         @click="open = !open"
       >
         <div class="min-w-0 flex-1">
+          <p v-if="toolLabel" class="mb-0.5 text-[11px] font-medium text-slate-500">{{ toolLabel }}</p>
           <p class="truncate text-sm text-slate-200">{{ summary }}</p>
           <p class="text-xs text-slate-500">
-            {{ formatTime(msg.timestamp) }}
-            <span v-if="msg.message?.status === 'running'" class="ml-2 text-amber-400">执行中…</span>
-            <span v-else-if="msg.message?.status === 'cancelled'" class="ml-2 text-red-400">已终止</span>
-            <span v-else-if="msg.message?.status === 'completed'" class="ml-2 text-emerald-400">完成</span>
-            <span v-else-if="msg.message?.status === 'failed'" class="ml-2 text-red-400">失败</span>
+            <span v-if="msg.message?.status === 'running'" class="text-amber-400">执行中…</span>
+            <span v-else-if="msg.message?.status === 'cancelled'" class="text-red-400">已终止</span>
+            <span v-else-if="msg.message?.status === 'completed'" class="text-emerald-400">完成</span>
+            <span v-else-if="msg.message?.status === 'failed'" class="text-red-400">失败</span>
           </p>
         </div>
         <span class="shrink-0 text-slate-400 transition-transform" :class="open && 'rotate-180'">▼</span>
@@ -77,7 +104,7 @@ function onSaveCrawlFile() {
         </div>
         <pre
           class="max-h-64 overflow-auto bg-black px-4 py-3 font-mono text-xs leading-relaxed text-emerald-400 scrollbar-thin"
-        >{{ lines }}</pre>
+        >{{ lines || '（暂无日志）' }}</pre>
       </div>
     </div>
   </div>

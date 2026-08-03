@@ -166,6 +166,13 @@ SLOT_DEFINITIONS: tuple[SlotDefinition, ...] = (
         capability="chat",
         description="规则触发后更新 Conversation State / Summary / 记忆候选等",
     ),
+    SlotDefinition(
+        slot_key="mind.analyze",
+        label="心智状态分析",
+        module="emotion",
+        capability="chat",
+        description="规则触发后更新情绪/氛围/行为倾向（Mind Analyzer）",
+    ),
 )
 
 SLOT_BY_KEY: dict[str, SlotDefinition] = {item.slot_key: item for item in SLOT_DEFINITIONS}

@@ -7,6 +7,7 @@ export default defineConfig({
   build: {
     outDir: resolve(__dirname, '../app/static'),
     emptyOutDir: true,
+    chunkSizeWarningLimit: 800,
   },
   server: {
     port: 5173,

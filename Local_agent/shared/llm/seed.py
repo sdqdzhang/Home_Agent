@@ -239,6 +239,30 @@ def build_seed_data() -> tuple[list[EndpointRecord], list[BindingRecord]]:
             max_tokens_override=4096,
             updated_at=now,
         ),
+        BindingRecord(
+            slot_key="main.chat",
+            endpoint_id=ep_default.id,
+            model_override=None,
+            temperature_override=None,
+            max_tokens_override=None,
+            updated_at=now,
+        ),
+        BindingRecord(
+            slot_key="conversation.analyze",
+            endpoint_id=ep_default.id,
+            model_override=None,
+            temperature_override=0.2,
+            max_tokens_override=2048,
+            updated_at=now,
+        ),
+        BindingRecord(
+            slot_key="mind.analyze",
+            endpoint_id=ep_default.id,
+            model_override=None,
+            temperature_override=0.2,
+            max_tokens_override=1024,
+            updated_at=now,
+        ),
     ]
 
     # 确保 slot 数量与定义一致
@@ -335,3 +359,26 @@ def migrate_planning_slots(store: LlmConfigStore) -> None:
 
     store.delete_binding("planner.clarify")
     store.delete_binding("planner.plan")
+
+
+def migrate_core_dialog_slots(store: LlmConfigStore) -> None:
+    """已有 DB 补齐 main.chat / conversation.analyze / mind.analyze。"""
+    source = store.get_binding("default.chat")
+    if not source:
+        return
+
+    defaults = {
+        "main.chat": (None, None),
+        "conversation.analyze": (0.2, 2048),
+        "mind.analyze": (0.2, 1024),
+    }
+    for slot_key, (temp, max_tokens) in defaults.items():
+        if store.get_binding(slot_key):
+            continue
+        store.upsert_binding(
+            slot_key,
+            source.endpoint_id,
+            model_override=source.model_override,
+            temperature_override=temp if temp is not None else source.temperature_override,
+            max_tokens_override=max_tokens or source.max_tokens_override,
+        )

@@ -18,8 +18,10 @@ export async function fetchTerminalStatus() {
   return res.json()
 }
 
-export async function fetchMessages({ target = WS_TARGET, name = null, limit = 200 } = {}) {
+export async function fetchMessages({ target, name = null, limit = 200 } = {}) {
   const params = new URLSearchParams({ limit: String(limit) })
+  // target 未传时默认只拉发往 user_ui 的模块消息；显式传 null 表示不按 target 过滤
+  if (target === undefined) target = WS_TARGET
   if (target) params.set('target', target)
   if (name) params.set('name', name)
   const res = await fetch(`/api/v1/messages?${params}`)
@@ -32,7 +34,8 @@ export async function fetchMessages({ target = WS_TARGET, name = null, limit = 2
 export async function fetchChatMessages(limit = 300) {
   const [inbound, outbound] = await Promise.all([
     fetchMessages({ target: WS_TARGET, limit }),
-    fetchMessages({ name: USER_SENDER, limit }),
+    // 用户消息 name=user_ui、target=各模块；必须清空默认 target，否则会变成 name+target 双过滤而查不到
+    fetchMessages({ target: null, name: USER_SENDER, limit }),
   ])
   const byId = new Map()
   for (const msg of [...inbound, ...outbound]) {

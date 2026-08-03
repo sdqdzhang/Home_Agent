@@ -3,10 +3,6 @@ defineProps({
   msg: { type: Object, required: true },
 })
 
-function formatTime(ts) {
-  return new Date(ts * 1000).toLocaleTimeString('zh-CN')
-}
-
 function reportLabel(type) {
   const map = {
     snapshot: '实时快照',
@@ -29,12 +25,17 @@ function reportLabel(type) {
       "
     >
       <div class="mb-2 flex flex-wrap items-center gap-2">
-        <span class="text-slate-500">[{{ formatTime(msg.timestamp) }}]</span>
         <span
           v-if="msg.message?.report_type"
           class="rounded bg-slate-700/80 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-300"
         >
           {{ reportLabel(msg.message.report_type) }}
+        </span>
+        <span
+          v-if="msg.message?.status === 'running'"
+          class="rounded bg-amber-500/20 px-2 py-0.5 text-[10px] text-amber-300"
+        >
+          进行中…
         </span>
         <span
           v-if="msg.message?.alert"

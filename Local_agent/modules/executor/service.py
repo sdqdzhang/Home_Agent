@@ -74,6 +74,8 @@ class ExecutorService:
 
         job_id = f"exec_{int(time.time())}_{uuid.uuid4().hex[:8]}"
         run_ctx = self._register_run(job_id)
+        if request.ui_msg_id:
+            run_ctx["ui_msg_id"] = str(request.ui_msg_id).strip()
         job_log = JobLogger(executor_settings.logs_dir, job_id)
 
         try:
@@ -359,33 +361,58 @@ class ExecutorService:
             "log": log or [],
             "payload": payload,
         }
-
-        existing_id = self._log_msg_ids.get(job_id) if job_id else None
-        if existing_id:
-            try:
-                await self.server.update_message(existing_id, message=message)
-                return
-            except Exception:
-                logger.exception("executor update_log failed for %s, will recreate", existing_id)
-
+        # 稳定 id：同 job 全程原地更新，避免「路由中/处理中/执行中/完成」刷出多条卡片
         preferred_id = f"exec_log_{job_id}" if job_id else None
-        try:
-            result = await self.server.send_message(
-                msg_type=DEFAULT_MSG_TYPE,
-                message=message,
-                msg_id=preferred_id,
-            )
-            if job_id:
-                self._log_msg_ids[job_id] = self.server.message_id_from_response(
-                    result, preferred_id or ""
+        existing_id = self._log_msg_ids.get(job_id) if job_id else None
+        candidates = [eid for eid in (existing_id, preferred_id) if eid]
+        seen: set[str] = set()
+        updated = False
+        for mid in candidates:
+            if mid in seen:
+                continue
+            seen.add(mid)
+            try:
+                await self.server.update_message(mid, message=message)
+                if job_id:
+                    self._log_msg_ids[job_id] = mid
+                updated = True
+                break
+            except Exception:
+                logger.debug("executor update_log miss for %s, will create if needed", mid, exc_info=True)
+
+        if not updated:
+            try:
+                result = await self.server.send_message(
+                    msg_type=DEFAULT_MSG_TYPE,
+                    message=message,
+                    msg_id=preferred_id,
                 )
-        except Exception:
-            logger.exception("executor push_log failed")
-            # 若 id 冲突（进程重启后同 job 再推），尝试改为更新
-            if preferred_id:
-                try:
-                    await self.server.update_message(preferred_id, message=message)
-                    if job_id:
-                        self._log_msg_ids[job_id] = preferred_id
-                except Exception:
-                    logger.exception("executor push_log fallback update failed")
+                if job_id:
+                    self._log_msg_ids[job_id] = self.server.message_id_from_response(
+                        result, preferred_id or ""
+                    )
+            except Exception:
+                logger.exception("executor push_log failed")
+                # 若 id 冲突（进程重启后同 job 再推），改为更新
+                if preferred_id:
+                    try:
+                        await self.server.update_message(preferred_id, message=message)
+                        if job_id:
+                            self._log_msg_ids[job_id] = preferred_id
+                    except Exception:
+                        logger.exception("executor push_log fallback update failed")
+
+        # 同步更新主对话等调用方卡片（边执行边显示）
+        ui_msg_id = ""
+        if job_id:
+            ui_msg_id = str((self._active.get(job_id) or {}).get("ui_msg_id") or "").strip()
+        if ui_msg_id:
+            ui_message = {
+                **message,
+                "tool": "executor_run",
+                "text": summary,
+            }
+            try:
+                await self.server.update_message(ui_msg_id, message=ui_message)
+            except Exception:
+                logger.debug("executor mirror ui_msg_id=%s failed", ui_msg_id, exc_info=True)
