@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
+import uuid
 from typing import Any
 
 from shared.server_center.client import ServerCenterClient
@@ -35,6 +37,8 @@ class CrawlerService:
         self.server = server_client
         self._crawl_sem = asyncio.Semaphore(MAX_CONCURRENT_CRAWLS)
         self._bg_tasks: set[asyncio.Task[Any]] = set()
+        # request_id / job key → 已创建的 execution_log 消息 id（同任务原地更新）
+        self._log_msg_ids: dict[str, str] = {}
 
     async def handle_incoming_message(self, data: dict[str, Any]) -> None:
         """处理来自 Server Center WebSocket 的用户消息。"""
@@ -109,15 +113,19 @@ class CrawlerService:
         notify: bool = True,
         request_id: str = "",
         use_model: bool = True,
+        ui_msg_id: str = "",
     ) -> dict[str, Any]:
-        rid = (request_id or "").strip()
+        rid = (request_id or "").strip() or f"crawl_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+        uid = (ui_msg_id or "").strip()
         cfg = dict(config or {})
         cfg.pop("use_model", None)
-        await self._push_log(
-            f"爬取 {url} 进行中",
-            status="running",
-            request_id=rid,
-        )
+        if notify:
+            await self._push_log(
+                f"爬取 {url} 进行中",
+                status="running",
+                request_id=rid,
+                ui_msg_id=uid,
+            )
 
         async with self._crawl_sem:
             try:
@@ -127,24 +135,48 @@ class CrawlerService:
             except Exception as exc:
                 logger.exception("Crawl failed")
                 outcome = {"success": False, "error": str(exc), "log": [str(exc)]}
-                await self._push_log(
-                    str(exc),
-                    status="failed",
-                    log=outcome.get("log", []),
-                    request_id=rid,
-                )
+                if notify:
+                    await self._push_log(
+                        str(exc),
+                        status="failed",
+                        log=outcome.get("log", []),
+                        request_id=rid,
+                        ui_msg_id=uid,
+                    )
+                elif uid:
+                    await self._mirror_ui(
+                        uid,
+                        summary=str(exc),
+                        status="failed",
+                        log=outcome.get("log", []),
+                        request_id=rid,
+                    )
                 return outcome
 
         status = "completed" if outcome.get("success") else "failed"
         result = outcome.get("result") or {}
         summary = result.get("title") or url
-        await self._push_log(
-            f"爬取{'成功' if outcome.get('success') else '失败'}: {summary}",
-            status=status,
-            log=outcome.get("log", []),
-            payload={"job_id": outcome.get("job_id"), "result": outcome.get("result")},
-            request_id=rid,
-        )
+        final_summary = f"爬取{'成功' if outcome.get('success') else '失败'}: {summary}"
+        log_lines = outcome.get("log", [])
+        payload = {"job_id": outcome.get("job_id"), "result": outcome.get("result")}
+        if notify:
+            await self._push_log(
+                final_summary,
+                status=status,
+                log=log_lines,
+                payload=payload,
+                request_id=rid,
+                ui_msg_id=uid,
+            )
+        elif uid:
+            await self._mirror_ui(
+                uid,
+                summary=final_summary,
+                status=status,
+                log=log_lines if isinstance(log_lines, list) else [str(log_lines)],
+                payload=payload,
+                request_id=rid,
+            )
         return outcome
 
     async def chat(
@@ -198,6 +230,34 @@ class CrawlerService:
     def list_jobs(self, limit: int = 50) -> list[dict]:
         return self.store.list_jobs(limit)
 
+    async def _mirror_ui(
+        self,
+        ui_msg_id: str,
+        *,
+        summary: str,
+        status: str,
+        log: list[str] | None = None,
+        payload: dict | None = None,
+        request_id: str = "",
+    ) -> None:
+        if not self.server or not ui_msg_id:
+            return
+        message: dict[str, Any] = {
+            "summary": summary,
+            "text": summary,
+            "status": status,
+            "log": log or [],
+            "tool": "crawler_fetch",
+        }
+        if payload:
+            message["payload"] = {**payload, "tool": "crawler_fetch"}
+        if request_id:
+            message["request_id"] = request_id
+        try:
+            await self.server.update_message(ui_msg_id, message=message)
+        except Exception:
+            logger.debug("crawler mirror ui_msg_id=%s failed", ui_msg_id, exc_info=True)
+
     async def _push_log(
         self,
         summary: str,
@@ -206,9 +266,11 @@ class CrawlerService:
         log: list[str] | None = None,
         payload: dict | None = None,
         request_id: str = "",
+        ui_msg_id: str = "",
     ) -> None:
         if not self.server:
             return
+        payload = dict(payload or {})
         message: dict[str, Any] = {
             "summary": summary,
             "status": status,
@@ -218,4 +280,56 @@ class CrawlerService:
             message["payload"] = payload
         if request_id:
             message["request_id"] = request_id
-        await self.server.send_message(msg_type=DEFAULT_MSG_TYPE, message=message)
+
+        job_id = str(payload.get("job_id") or "").strip()
+        rid = (request_id or "").strip()
+        # 优先用 request_id 作为稳定键（进行中时尚无 job_id）
+        key = rid or job_id
+        preferred_id = f"crawl_log_{key}" if key else None
+        existing_id = self._log_msg_ids.get(key) if key else None
+        candidates = [eid for eid in (existing_id, preferred_id) if eid]
+        seen: set[str] = set()
+        updated = False
+        for mid in candidates:
+            if mid in seen:
+                continue
+            seen.add(mid)
+            try:
+                await self.server.update_message(mid, message=message)
+                if key:
+                    self._log_msg_ids[key] = mid
+                updated = True
+                break
+            except Exception:
+                logger.debug("crawler update_log miss for %s", mid, exc_info=True)
+
+        if not updated:
+            try:
+                result = await self.server.send_message(
+                    msg_type=DEFAULT_MSG_TYPE,
+                    message=message,
+                    msg_id=preferred_id,
+                )
+                if key:
+                    self._log_msg_ids[key] = self.server.message_id_from_response(
+                        result, preferred_id or ""
+                    )
+            except Exception:
+                logger.exception("crawler push_log failed")
+                if preferred_id:
+                    try:
+                        await self.server.update_message(preferred_id, message=message)
+                        if key:
+                            self._log_msg_ids[key] = preferred_id
+                    except Exception:
+                        logger.exception("crawler push_log fallback update failed")
+
+        if ui_msg_id:
+            await self._mirror_ui(
+                ui_msg_id,
+                summary=summary,
+                status=status,
+                log=log,
+                payload=payload,
+                request_id=request_id,
+            )

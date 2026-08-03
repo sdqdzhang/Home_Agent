@@ -29,6 +29,21 @@ class PendingPlanning(Exception):
         self.tool_call_id = tool_call_id
 
 
+def _trim_tool_data(data: dict[str, Any]) -> dict[str, Any]:
+    out = {
+        k: v
+        for k, v in data.items()
+        if not str(k).startswith("_") and k not in ("parsed_action",)
+    }
+    if isinstance(out.get("stdout"), str):
+        out["stdout"] = out["stdout"][:1500]
+    if isinstance(out.get("stderr"), str):
+        out["stderr"] = out["stderr"][:500]
+    if isinstance(out.get("content"), str):
+        out["content"] = out["content"][:3000]
+    return out
+
+
 class MainAssistant:
     def __init__(self, slot_key: str = SLOT_KEY) -> None:
         self.slot_key = slot_key
@@ -39,8 +54,14 @@ class MainAssistant:
         user_text: str,
         history: list[dict[str, str]],
         manager_ctx: dict[str, Any] | None,
+        mind_ctx: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         parts = [SYSTEM_PROMPT]
+        mind_text = ""
+        if mind_ctx:
+            mind_text = str(mind_ctx.get("mind_context") or "").strip()
+        if mind_text:
+            parts.append("\n\n" + mind_text)
         if manager_ctx:
             state = manager_ctx.get("conversation_state") or {}
             summary = manager_ctx.get("conversation_summary") or ""
@@ -60,6 +81,31 @@ class MainAssistant:
         messages.append({"role": "user", "content": user_text})
         return messages
 
+    async def _ask_text_reply(
+        self,
+        llm: Any,
+        messages: list[dict[str, Any]],
+        usage_totals: dict[str, int],
+        *,
+        nudge: bool = False,
+    ) -> str:
+        """工具执行后强制要一轮纯文本（不带 tools），避免模型空 content 结束。"""
+        if nudge:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": "请根据刚才的工具结果，用一两句中文向用户说明完成情况。不要调用工具。",
+                }
+            )
+        msg = await llm.chat_completion(messages, tools=None, tool_choice=None)
+        usage = msg.pop("_usage", None) or {}
+        for k in usage_totals:
+            usage_totals[k] += int(usage.get(k) or 0)
+        # 即便模型仍返回 tool_calls，也忽略，只取文本
+        text = str(msg.get("content") or "").strip()
+        messages.append({"role": "assistant", "content": text})
+        return text
+
     async def run_fc_loop(
         self,
         messages: list[dict[str, Any]],
@@ -72,6 +118,8 @@ class MainAssistant:
         """
         返回 (final_text, tool_trace, usage_totals)。
         若规划需质询，抛出 PendingPlanning（messages 已含 assistant.tool_calls，尚无对应 tool 结果）。
+
+        工具回合结束后立刻再请求一轮「禁止工具」的文本回复，再决定是否进入下一轮工具。
         """
         llm = get_llm_client(self.slot_key)
         tools = tools_for_openai(available_modules=available_modules)
@@ -90,18 +138,24 @@ class MainAssistant:
                 usage_totals[k] += int(usage.get(k) or 0)
 
             tool_calls = msg.get("tool_calls") or []
-            content = str(msg.get("content") or "")
-            assistant_msg: dict[str, Any] = {"role": "assistant", "content": content}
-            if tool_calls:
-                assistant_msg["tool_calls"] = tool_calls
-            messages.append(assistant_msg)
+            content = str(msg.get("content") or "").strip()
 
             if not tool_calls:
-                final_text = content.strip()
+                messages.append({"role": "assistant", "content": content})
+                final_text = content
                 break
 
-            if content.strip() and on_assistant_text:
-                await on_assistant_text(content.strip())
+            if content and on_assistant_text:
+                await on_assistant_text(content)
+
+            # 带 tool_calls 时 content 常为空；用空字符串即可，避免部分网关拒绝 null
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": content or "",
+                    "tool_calls": tool_calls,
+                }
+            )
 
             for tc in tool_calls:
                 tc_id = str(tc.get("id") or "")
@@ -117,21 +171,38 @@ class MainAssistant:
                 payload = {
                     "ok": result.ok,
                     "summary": result.summary,
-                    "data": {k: v for k, v in result.data.items() if not str(k).startswith("_")},
+                    "data": _trim_tool_data(result.data),
                     "error": result.error,
                 }
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tc_id,
-                        "content": json.dumps(payload, ensure_ascii=False)[:12000],
+                        "content": json.dumps(payload, ensure_ascii=False)[:8000],
                     }
                 )
+
+            # 本轮工具已完成 → 强制纯文本说明（不再挂 tools，避免空回复）
+            try:
+                text = await self._ask_text_reply(llm, messages, usage_totals, nudge=False)
+                if not text:
+                    text = await self._ask_text_reply(llm, messages, usage_totals, nudge=True)
+            except Exception:
+                logger.exception("text reply after tools failed")
+                text = ""
+
+            if text:
+                final_text = text
+                break
+
+            # 仍无文本：允许下一轮再决策（少数多工具场景）；最后一轮则结束
+            logger.warning("model returned empty text after tools; continuing fc loop")
         else:
-            final_text = final_text or "已达到工具调用轮次上限，请根据已有结果继续，或拆分任务后再试。"
+            final_text = final_text or "已达到工具调用轮次上限，请根据上方结果继续，或拆分任务后再试。"
 
         if not final_text:
-            final_text = "（无文本回复）"
+            # 仍空：至少让用户知道流程结束（非工具摘要拼装）
+            final_text = "好的，我这边处理好了。还需要做什么可以直接说。"
         return final_text, tool_trace, usage_totals
 
     @staticmethod
@@ -144,13 +215,13 @@ class MainAssistant:
         payload = {
             "ok": result.ok,
             "summary": result.summary,
-            "data": {k: v for k, v in result.data.items() if not str(k).startswith("_")},
+            "data": _trim_tool_data(result.data),
             "error": result.error,
         }
         body = {
             "role": "tool",
             "tool_call_id": tool_call_id,
-            "content": json.dumps(payload, ensure_ascii=False)[:12000],
+            "content": json.dumps(payload, ensure_ascii=False)[:8000],
         }
         for i in range(len(messages) - 1, -1, -1):
             m = messages[i]

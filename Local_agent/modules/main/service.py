@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Literal
 
 from shared.server_center.client import ServerCenterClient
@@ -24,6 +26,13 @@ SessionMode = Literal["chat", "awaiting_clarify"]
 
 def _estimate_tokens(text: str) -> int:
     return max(1, len(text or "") // 2)
+
+
+def _stamp_user_text(text: str, *, when: datetime | None = None) -> str:
+    """给模型看的用户消息带上本地日期时间（UI 仍显示原文）。"""
+    dt = when or datetime.now().astimezone()
+    label = f"{dt.year}年{dt.month}月{dt.day}日 {dt.hour:02d}:{dt.minute:02d}"
+    return f"[{label}] {text}"
 
 
 def _available_modules() -> set[str]:
@@ -46,10 +55,13 @@ class _Session:
     fc_messages: list[dict[str, Any]] = field(default_factory=list)
     planning: PlanningBridgeState | None = None
     origin_user_text: str = ""
+    stamped_user_text: str = ""
     turn_index: int = 0
     context_used_tokens: int = 0
     context_limit_tokens: int = 8192
     module_log: list[dict[str, Any]] = field(default_factory=list)
+    # 忙时入队，避免「谢谢」等后续消息被直接丢弃
+    pending_user_texts: list[str] = field(default_factory=list)
 
 
 class MainService:
@@ -190,7 +202,7 @@ class MainService:
                     summary="规划已取消",
                 )
 
-            runtime = ToolRuntime(push=self._push_compat, run_planning=run_planning, session_id=sess.session_id)
+            runtime = ToolRuntime(push=self._push_compat, update=self._update, run_planning=run_planning, session_id=sess.session_id)
             try:
                 final_text, tool_trace, usage = await self.assistant.run_fc_loop(
                     messages,
@@ -209,12 +221,13 @@ class MainService:
 
         sess.planning = None
         sess.fc_messages = []
-        history_user = sess.origin_user_text or state.task
+        history_user = sess.stamped_user_text or _stamp_user_text(sess.origin_user_text or state.task)
         await self._finish_turn(sess, history_user, final_text or "规划已取消。", tool_trace, usage, messages)
         sess.origin_user_text = ""
+        sess.stamped_user_text = ""
 
-    async def _push_compat(self, msg_type: str, message: dict[str, Any]) -> None:
-        await self._push(msg_type, message)
+    async def _push_compat(self, msg_type: str, message: dict[str, Any], *, msg_id: str | None = None) -> str:
+        return await self._push(msg_type, message, msg_id=msg_id)
 
     async def _on_clarify_response(self, data: dict[str, Any]) -> None:
         response = data.get("response") or {}
@@ -254,30 +267,50 @@ class MainService:
 
     async def handle_user_text(self, text: str, *, session_id: str = "default") -> None:
         sess = self._session(session_id)
+        text = (text or "").strip()
+        if not text:
+            return
+
+        # 忙时排队，不丢消息（此前会直接 return，导致「谢谢」等没有回复）
         if session_id in self._busy:
-            await self._push("text", {"text": "上一轮仍在处理，请稍候。", "role": "agent"})
+            sess.pending_user_texts.append(text)
+            if len(sess.pending_user_texts) == 1:
+                await self._push(
+                    "text",
+                    {"text": "收到，等当前步骤结束后马上回复你。", "role": "agent"},
+                )
             return
 
         self._busy.add(session_id)
         try:
-            if sess.mode == "awaiting_clarify" and sess.planning is not None:
-                await self._continue_planning(sess, user_text=text, answers=None)
-            else:
-                await self._run_chat_turn(sess, text)
+            await self._handle_user_text_inner(sess, text)
+            while sess.pending_user_texts:
+                nxt = sess.pending_user_texts.pop(0)
+                await self._handle_user_text_inner(sess, nxt)
         except Exception as exc:
             logger.exception("main turn failed")
             await self._push("text", {"text": f"主对话处理异常：{exc}", "role": "agent"})
         finally:
             self._busy.discard(session_id)
 
+    async def _handle_user_text_inner(self, sess: _Session, text: str) -> None:
+        if sess.mode == "awaiting_clarify" and sess.planning is not None:
+            await self._continue_planning(sess, user_text=text, answers=None)
+        else:
+            await self._run_chat_turn(sess, text)
+
     async def _run_chat_turn(self, sess: _Session, user_text: str) -> None:
         sess.turn_index += 1
         sess.origin_user_text = user_text
+        stamped_user = _stamp_user_text(user_text)
+        sess.stamped_user_text = stamped_user
         manager_ctx = await self._manager_context(sess.session_id)
+        mind_ctx = await self._mind_context(sess.session_id)
         messages = self.assistant.build_messages(
-            user_text=user_text,
+            user_text=stamped_user,
             history=sess.history,
             manager_ctx=manager_ctx,
+            mind_ctx=mind_ctx,
         )
 
         async def run_planning(task: str, request_id: str) -> ToolResultForModel:
@@ -308,6 +341,7 @@ class MainService:
 
         runtime = ToolRuntime(
             push=self._push_compat,
+            update=self._update,
             run_planning=run_planning,
             session_id=sess.session_id,
         )
@@ -329,7 +363,7 @@ class MainService:
             sess.module_log.append({"event": "planning_awaiting_clarify", "turn": sess.turn_index})
             return
 
-        await self._finish_turn(sess, user_text, final_text, tool_trace, usage, messages)
+        await self._finish_turn(sess, stamped_user, final_text, tool_trace, usage, messages)
 
     async def _continue_planning(
         self,
@@ -379,6 +413,7 @@ class MainService:
 
             runtime = ToolRuntime(
                 push=self._push_compat,
+                update=self._update,
                 run_planning=run_planning,
                 session_id=sess.session_id,
             )
@@ -397,9 +432,13 @@ class MainService:
 
             sess.planning = None
             sess.fc_messages = []
-            history_user = sess.origin_user_text or state.task or user_text
+            history_user = (
+                sess.stamped_user_text
+                or _stamp_user_text(sess.origin_user_text or state.task or user_text)
+            )
             await self._finish_turn(sess, history_user, final_text, tool_trace, usage, messages)
             sess.origin_user_text = ""
+            sess.stamped_user_text = ""
         finally:
             if acquired:
                 self._busy.discard(sess.session_id)
@@ -413,15 +452,17 @@ class MainService:
         usage: dict[str, Any],
         messages: list[dict[str, Any]],
     ) -> None:
-        await self._push("text", {"text": final_text, "role": "agent"})
+        # 先推送可见回复，再做 CM / Mind（避免收尾 LLM 拖住 busy、吞掉后续「谢谢」）
+        text = (final_text or "").strip() or "好的，我这边处理好了。"
+        await self._push("text", {"text": text, "role": "agent"})
         sess.history.append({"role": "user", "content": user_text})
-        sess.history.append({"role": "assistant", "content": final_text})
+        sess.history.append({"role": "assistant", "content": text})
         if len(sess.history) > 40:
             sess.history = sess.history[-40:]
 
         total = int(usage.get("total_tokens") or 0)
         if total <= 0:
-            total = _estimate_tokens(user_text) + _estimate_tokens(final_text)
+            total = _estimate_tokens(user_text) + _estimate_tokens(text)
         sess.context_used_tokens = min(sess.context_limit_tokens, sess.context_used_tokens // 2 + total)
 
         planning_done = any(t.get("tool") == "planning_run" for t in tool_trace)
@@ -442,16 +483,97 @@ class MainService:
             )
         sess.module_log = sess.module_log[-80:]
 
-        await self._notify_manager(
-            sess,
-            user_text=user_text,
-            assistant_text=final_text,
-            tool_trace=tool_trace,
-            usage_total=total,
-            planning_completed=planning_done,
-            executor_completed=executor_done,
-            files_changed=files_changed,
+        asyncio.create_task(
+            self._notify_after_turn(
+                sess.session_id,
+                turn_index=sess.turn_index,
+                user_text=user_text,
+                assistant_text=text,
+                tool_trace=list(tool_trace),
+                usage_total=total,
+                context_used_tokens=sess.context_used_tokens,
+                context_limit_tokens=sess.context_limit_tokens,
+                module_log_tail=list(sess.module_log[-10:]),
+                planning_completed=planning_done,
+                executor_completed=executor_done,
+                files_changed=files_changed,
+            )
         )
+
+    async def _notify_after_turn(
+        self,
+        session_id: str,
+        *,
+        turn_index: int,
+        user_text: str,
+        assistant_text: str,
+        tool_trace: list[dict[str, Any]],
+        usage_total: int,
+        context_used_tokens: int,
+        context_limit_tokens: int,
+        module_log_tail: list[dict[str, Any]],
+        planning_completed: bool,
+        executor_completed: bool,
+        files_changed: list[str],
+    ) -> None:
+        """后台通知 CM / Mind，不阻塞主对话 busy。"""
+        try:
+            from modules.conversation_manager.schemas import TurnEndEvent
+
+            event = TurnEndEvent(
+                session_id=session_id,
+                turn_index=turn_index,
+                user_text=user_text,
+                assistant_text=assistant_text,
+                estimated_turn_tokens=_estimate_tokens(user_text) + _estimate_tokens(assistant_text),
+                context_used_tokens=context_used_tokens,
+                context_limit_tokens=context_limit_tokens,
+                tool_calls=[{"tool": t.get("tool"), "args": t.get("args")} for t in tool_trace],
+                tool_results=[t.get("result") or {} for t in tool_trace],
+                files_changed=files_changed,
+                planning_completed=planning_completed,
+                executor_completed=executor_completed,
+                module_log_entries=module_log_tail,
+            )
+            await call("conversation_manager", "on_turn_end", event)
+        except Exception:
+            logger.exception("conversation_manager.on_turn_end failed")
+
+        try:
+            if not await call("emotion", "is_enabled"):
+                return
+        except Exception:
+            return
+
+        try:
+            from modules.emotion.schemas import MindTurnEndEvent
+
+            topic = ""
+            project = ""
+            try:
+                cm_ctx = await call("conversation_manager", "context_for_main", session_id)
+                state = (cm_ctx or {}).get("conversation_state") or {}
+                topic = str(state.get("current_topic") or "")
+                project = str(state.get("current_project") or "")
+            except Exception:
+                pass
+
+            event = MindTurnEndEvent(
+                session_id=session_id,
+                turn_index=turn_index,
+                user_text=user_text,
+                assistant_text=assistant_text,
+                estimated_turn_tokens=_estimate_tokens(user_text) + _estimate_tokens(assistant_text),
+                tool_calls=[{"tool": t.get("tool"), "args": t.get("args")} for t in tool_trace],
+                tool_results=[t.get("result") or {} for t in tool_trace],
+                planning_completed=planning_completed,
+                executor_completed=executor_completed,
+                conversation_topic=topic,
+                conversation_project=project,
+            )
+            await call("emotion", "on_turn_end", event)
+        except Exception:
+            logger.exception("emotion.on_turn_end failed")
 
     async def _manager_context(self, session_id: str) -> dict[str, Any]:
         try:
@@ -460,36 +582,11 @@ class MainService:
             logger.exception("context_for_main failed")
             return {}
 
-    async def _notify_manager(
-        self,
-        sess: _Session,
-        *,
-        user_text: str,
-        assistant_text: str,
-        tool_trace: list[dict[str, Any]],
-        usage_total: int,
-        planning_completed: bool,
-        executor_completed: bool,
-        files_changed: list[str],
-    ) -> None:
-        from modules.conversation_manager.schemas import TurnEndEvent
-
-        event = TurnEndEvent(
-            session_id=sess.session_id,
-            turn_index=sess.turn_index,
-            user_text=user_text,
-            assistant_text=assistant_text,
-            estimated_turn_tokens=_estimate_tokens(user_text) + _estimate_tokens(assistant_text),
-            context_used_tokens=sess.context_used_tokens,
-            context_limit_tokens=sess.context_limit_tokens,
-            tool_calls=[{"tool": t.get("tool"), "args": t.get("args")} for t in tool_trace],
-            tool_results=[t.get("result") or {} for t in tool_trace],
-            files_changed=files_changed,
-            planning_completed=planning_completed,
-            executor_completed=executor_completed,
-            module_log_entries=list(sess.module_log[-10:]),
-        )
+    async def _mind_context(self, session_id: str) -> dict[str, Any]:
         try:
-            await call("conversation_manager", "on_turn_end", event)
+            if not await call("emotion", "is_enabled"):
+                return {}
+            return await call("emotion", "context_for_main", session_id)
         except Exception:
-            logger.exception("conversation_manager.on_turn_end failed")
+            logger.exception("emotion.context_for_main failed")
+            return {}

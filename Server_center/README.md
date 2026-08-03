@@ -328,7 +328,7 @@ ws://your-server:8765/ws/{target}
 | `main` | 主对话 | `main` / `主对话` | `text` / `tool_result` |
 | `conversation_manager` | 会话管理 | `会话管理` / `conversation_manager` | `cm_snapshot` / `cm_event` |
 | `planning` | 规划 | `规划模块` / `planning` | `plan_result` |
-| `emotion` | 情感与性格状态 | `情感与性格状态模块` / `emotion` | `persona_state` |
+| `emotion` | 情感与性格状态 | `情感与性格状态模块` / `emotion` | `mind_snapshot` / `persona_state` |
 | `security` | 安全检查 | `安全检查模块` / `security` | `approval_request` |
 | `env` | 环境感知 | `环境感知模块` / `env_sense` | `system_status` |
 | `memory` | 长期记忆 | `长期记忆模块` / `memory` | `memory_record` |
@@ -386,6 +386,7 @@ ws://your-server:8765/ws/{target}
 | `desktop_screenshot` | `DesktopScreenshot.vue` | 远程桌面截图预览 |
 | `camera_capture` | `DesktopScreenshot.vue` | 摄像头拍照预览 |
 | `persona_state` | `PersonaState.vue` | 情感/性格状态卡片，**不触发**未读 |
+| `mind_snapshot` | Emotion 工作台 | 心智快照（整理后人格 + 动态状态），**不触发**未读 |
 | `rag_result` | `RagResult.vue` | RAG 查询、回答与来源列表 |
 | `plan_result` | `PlanResult.vue` | 任务规划：目标 / TaskGraph 节点 / 状态（兼容旧 steps） |
 | `datablock` | `DataBlockResult.vue` | 处理：要求 / 输出块 / 错误 |
@@ -465,6 +466,29 @@ ws://your-server:8765/ws/{target}
   "personality": "温和",
   "text": "当前对话氛围积极",
   "traits": ["耐心", "幽默"]
+}
+```
+
+**mind_snapshot**（Emotion 工作台主数据；含整理后的人格视图，不是 YAML 原文）
+```json
+{
+  "persona": {
+    "id": "cute",
+    "display_name": "小暖",
+    "summary": "整理后的人格摘要……",
+    "identity": { "name": "小暖", "role": "…", "self_reference": "我" },
+    "values": ["真诚温柔"],
+    "principles": ["…"],
+    "style": { "tone": "柔软亲切", "language": "中文", "emoji": false },
+    "prohibitions": ["…"],
+    "ui": { "personality": "温柔俏皮", "traits": ["体贴"] },
+    "source_path": "…/cute.yaml"
+  },
+  "available_personas": [{ "id": "default", "path": "…" }],
+  "active_spec": "cute",
+  "mind_state": { "emotion": { "mood": "平静", "intensity": 0.3 }, "work_mode": "chat" },
+  "mind_context": "## 心智与行为上下文…",
+  "recent_changes": []
 }
 ```
 

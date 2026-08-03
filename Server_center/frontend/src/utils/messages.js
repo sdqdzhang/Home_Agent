@@ -31,6 +31,10 @@ export function messageSummary(msg) {
   if (msg.msg_type === 'desktop_screenshot') return '远程桌面截图'
   if (msg.msg_type === 'camera_capture') return '摄像头拍照'
   if (msg.msg_type === 'persona_state') return msg.message?.mood || '状态更新'
+  if (msg.msg_type === 'mind_snapshot') {
+    const name = msg.message?.persona?.display_name || msg.message?.persona_display_name
+    return name ? `心智快照 · ${name}` : '心智快照'
+  }
   if (msg.msg_type === 'rag_result') return msg.message?.query || 'RAG 检索结果'
   if (msg.msg_type === 'llm_config_result') {
     return msg.message?.ok ? '模型配置已更新' : '模型配置失败'
@@ -69,6 +73,7 @@ export function countsAsUnread(msg) {
   return (
     msg.msg_type !== 'system_status' &&
     msg.msg_type !== 'persona_state' &&
+    msg.msg_type !== 'mind_snapshot' &&
     msg.msg_type !== 'llm_config_result' &&
     msg.msg_type !== 'security_lists_result' &&
     msg.msg_type !== 'plan_progress' &&
@@ -251,7 +256,7 @@ export function isAgentWorking(messages, agent) {
   }
   if (recent.msg_type === 'clarify_request' && recent.status === 'pending') return true
   if (['execution_log', 'rag_result', 'datablock', 'plan_result', 'graph_run_result', 'planning_session'].includes(recent.msg_type) && age < 30) return true
-  if (recent.msg_type !== 'system_status' && recent.msg_type !== 'persona_state' && age < 12) {
+  if (recent.msg_type !== 'system_status' && recent.msg_type !== 'persona_state' && recent.msg_type !== 'mind_snapshot' && age < 12) {
     return true
   }
   return false
@@ -260,6 +265,11 @@ export function isAgentWorking(messages, agent) {
 /** @param {UiMessage[]} messages @param {{ id: string, defaultMood?: string }} agent */
 export function agentMood(messages, agent) {
   if (agent.id === 'emotion') {
+    const snap = messages
+      .filter((m) => belongsToAgent(m, agent) && m.msg_type === 'mind_snapshot')
+      .sort((a, b) => b.timestamp - a.timestamp)[0]
+    const fromSnap = snap?.message?.mind_state?.emotion?.mood || snap?.message?.persona_state?.mood
+    if (fromSnap) return fromSnap
     const latest = messages
       .filter((m) => belongsToAgent(m, agent) && (m.message?.mood || m.msg_type === 'persona_state'))
       .sort((a, b) => b.timestamp - a.timestamp)[0]
@@ -273,6 +283,15 @@ export function agentMood(messages, agent) {
 
 /** @param {UiMessage[]} messages */
 export function globalEmotionMood(messages) {
+  const snap = messages
+    .filter(
+      (m) =>
+        m.msg_type === 'mind_snapshot' &&
+        ['情感与性格状态模块', 'emotion', 'persona'].includes(m.name),
+    )
+    .sort((a, b) => b.timestamp - a.timestamp)[0]
+  const fromSnap = snap?.message?.mind_state?.emotion?.mood
+  if (fromSnap) return fromSnap
   const emotion = messages
     .filter(
       (m) =>
@@ -286,6 +305,60 @@ export function globalEmotionMood(messages) {
 /** @param {UiMessage[]} list */
 export function sortMessagesAsc(list) {
   return [...list].sort((a, b) => a.timestamp - b.timestamp)
+}
+
+const WEEKDAY_CN = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六']
+
+function _startOfLocalDay(d) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate())
+}
+
+/**
+ * 微信风格时间标签（默认模式，非点击详详）。
+ * @param {number} tsSeconds
+ * @param {Date} [now]
+ */
+export function formatWeChatTimeLabel(tsSeconds, now = new Date()) {
+  if (tsSeconds == null || Number.isNaN(Number(tsSeconds))) return ''
+  const d = new Date(Number(tsSeconds) * 1000)
+  if (Number.isNaN(d.getTime())) return ''
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  const dayStart = _startOfLocalDay(d)
+  const todayStart = _startOfLocalDay(now)
+  const diffDays = Math.round((todayStart - dayStart) / 86400000)
+
+  if (diffDays === 0) return hm
+  if (diffDays === 1) return `昨天 ${hm}`
+  if (diffDays === 2) return `前天 ${hm}`
+
+  // 本周内（非昨前天）：以「本周一」为界
+  const dow = todayStart.getDay() || 7 // 周日=7
+  const weekStart = new Date(todayStart)
+  weekStart.setDate(todayStart.getDate() - (dow - 1))
+  if (dayStart >= weekStart && diffDays > 0) {
+    return `${WEEKDAY_CN[d.getDay()]} ${hm}`
+  }
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${hm}`
+}
+
+/**
+ * 相邻消息是否需要显示时间分隔：>5 分钟，或跨整点，或跨午夜。
+ * @param {number | null | undefined} prevTs
+ * @param {number} currTs
+ */
+export function shouldShowWeChatTimeDivider(prevTs, currTs) {
+  if (currTs == null || Number.isNaN(Number(currTs))) return false
+  if (prevTs == null || Number.isNaN(Number(prevTs))) return true
+  const prev = Number(prevTs)
+  const curr = Number(currTs)
+  if (curr - prev >= 5 * 60) return true
+  const a = new Date(prev * 1000)
+  const b = new Date(curr * 1000)
+  if (a.getFullYear() !== b.getFullYear() || a.getMonth() !== b.getMonth() || a.getDate() !== b.getDate()) {
+    return true
+  }
+  if (a.getHours() !== b.getHours()) return true
+  return false
 }
 
 /** 环境模块对话区：仅 text / desktop_screenshot，不含 system_status 流 */

@@ -25,7 +25,10 @@ function lastMessage(agent) {
       m.msg_type !== 'clarify_result' &&
       m.msg_type !== 'env_probe_result' &&
       m.msg_type !== 'graph_run_result' &&
-      m.msg_type !== 'planning_action',
+      m.msg_type !== 'planning_action' &&
+      m.msg_type !== 'mind_snapshot' &&
+      m.msg_type !== 'persona_state' &&
+      m.msg_type !== 'cm_snapshot',
   )
   if (!list.length) return null
   return list.reduce((a, b) => (a.timestamp >= b.timestamp ? a : b))

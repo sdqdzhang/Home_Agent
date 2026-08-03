@@ -46,6 +46,7 @@ flowchart TB
 |------|-----|------|
 | 主对话 | `main` | 聊天 + Function Calling 编排；调用 planning / executor / rag / env / crawler |
 | 会话管理 | `conversation_manager` | 程序驱动 State / Analyzer / Open Tasks；向 main 注入上下文；记忆候选写入 memory |
+| 情感与状态（Mind） | `emotion` | 情绪连续性与 Mind Context；规则触发 `mind.analyze`；推送 `persona_state` |
 | 规划 | `planning` | 质询/环境探测 → 静态 TaskGraph → 拓扑并发执行；主对话黑盒桥接 + Web 工作台 |
 | 执行 | `executor` | 自然语言自动路由子能力 → 安检 → 执行（命令 / 文件） |
 | 处理 | `processor` | 要求 + DataBlock 上下文 → 产出一个 DataBlock（供规划 Process 节点） |
@@ -82,7 +83,8 @@ Local_agent/
 │   ├── terminal/               # 远程终端 PTY 桥
 │   ├── planning/               # 规划（TaskGraph；见 INTEGRATION.md）
 │   ├── main/                   # 主对话（FC 编排）
-│   └── conversation_manager/   # 会话管理（规则 + Analyzer + 记忆候选）
+│   ├── conversation_manager/   # 会话管理（规则 + Analyzer + 记忆候选）
+│   └── emotion/                # 心智与状态（Mind Context + 情绪）
 ├── docs/
 │   ├── module-communication.md
 │   └── main-conversation.md    # 主对话 / Manager 设计与落地状态
@@ -244,6 +246,7 @@ result = await call("executor", "execute", ExecuteRequest(
 | 执行 | `执行模块` / `executor` | `execution_log` | [modules/executor/README.md](modules/executor/README.md) |
 | LLM 配置 | `本地Agent` / `local_agent` | `llm_config_result` | 下文 |
 | 规划 | `规划模块` / `planning` | `plan_result`、`text` | [modules/planning/README.md](modules/planning/README.md) · [INTEGRATION.md](modules/planning/INTEGRATION.md) |
+| 情感与状态 | `情感与性格状态模块` / `emotion` | `persona_state` | [modules/emotion/README.md](modules/emotion/README.md) |
 | 远程终端 | — | WebSocket `/ws/terminal_agent` | `LA_TERMINAL_ENABLED` |
 
 **推送联调示例**（环境感知）：
@@ -279,6 +282,7 @@ result = await call("executor", "execute", ExecuteRequest(
 | `planning.clarify` / `planning.plan` | planning | 质询 / 出图 |
 | `main.chat` | main | 主对话 Function Calling |
 | `conversation.analyze` | conversation_manager | Analyzer 更新 State / 记忆候选 |
+| `mind.analyze` | emotion | Mind Analyzer：情绪 / 氛围 / 行为倾向 |
 
 ### 代码调用
 

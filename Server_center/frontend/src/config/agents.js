@@ -27,6 +27,10 @@ export const AGENTS = [
       'clarify_result',
       'plan_progress',
       'graph_run_result',
+      'execution_log',
+      'system_status',
+      'desktop_screenshot',
+      'camera_capture',
     ],
   },
   {
@@ -53,8 +57,8 @@ export const AGENTS = [
     names: ['情感与性格状态模块', 'emotion', 'persona'],
     defaultMood: '平静',
     icon: '◌',
-    description: '情感、性格与情绪状态的感知与表达',
-    defaultMsgTypes: ['persona_state', 'text'],
+    description: '心智与状态：人格即插即用、情绪连续性、Mind Context',
+    defaultMsgTypes: ['mind_snapshot', 'persona_state', 'text'],
   },
   {
     id: 'security',

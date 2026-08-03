@@ -1,88 +1,100 @@
-# 主对话与会话管理
+# 主对话与会话管理 / 心智状态
 
-> 状态：**已接通**。main FC 循环、`conversation.analyze` Analyzer、planning 黑盒桥接、记忆候选 `observe` 均已落地。  
-> 模块：`main`、`conversation_manager`（id 不再使用 jarvis）。  
-> 待办：扩展模块即插即用扫描、Open Tasks「继续」语义增强等（见文末清单）。
+> 状态：**已接通**。main FC、`conversation.analyze`、Mind（`emotion` / `mind.analyze` / 人格 YAML）、planning 黑盒、记忆候选 `observe` 均已落地。  
+> 模块：`main`、`conversation_manager`、`emotion`（Mind）。  
+> 待办：扩展模块即插即用扫描、Open Tasks「继续」语义等（见文末）。
 
 ## 1. 职责切分
 
 | 模块 | 谁调用 | 职责 |
 |------|--------|------|
-| **main** | 用户（经 Server Center） | 与用户聊天；Function Calling 调工具；持有对话轮次；**程序**在每轮结束后调用 Conversation Manager |
-| **conversation_manager** | **仅程序**（`local_bus`，非 LLM tool） | 会话生命周期、规则触发 Analyzer、维护 State/Summary/Open Tasks、推送 UI 指标；记忆写入经本模块落到 `memory` |
+| **main** | 用户（经 Server Center） | 聊天 + FC；轮前拉取 CM / Mind 上下文；轮后通知 CM 与 Mind |
+| **conversation_manager** | **仅程序**（`local_bus`） | 会话 State/Summary/Open Tasks；规则触发 Analyzer；记忆候选 → `memory` |
+| **emotion（Mind）** | **仅程序**（`local_bus`） | 情绪连续性、work_mode、关系熟悉度；规则触发 `mind.analyze`；注入 Mind Context |
 | **memory** | Manager（及独立调试） | 落库；**不对 main 的 FC 开放** |
-| **security / processor** | executor / planning 内部 | **不对 main 开放**，提示词不提及 |
+| **security / processor** | executor / planning 内部 | **不对 main 开放** |
 
 ```
 用户 ↔ main（聊天 + FC）
          │ 程序 local_bus
-         ▼
- conversation_manager ──规则命中──► Analyzer ──► memory / State / Summary…
+         ├─► conversation_manager ──► State / Summary / memory…
+         └─► emotion (Mind) ──► 情绪衰减或 Analyzer ──► persona_state UI
          │
-         └── 注入 main 上下文（State + Summary + 最近轮 + 工具结果）
-             不调用 planning
+         └── 注入：Tool Policy + Mind Context + Conversation State/Summary + 最近轮
 
 main FC → planning | executor | rag | env | crawler(扩展)…
-              └── planning/executor 内部才碰 processor / security
 ```
+
+**Mind Context** 回答「现在该怎么说话」；**Conversation Context** 回答「之前聊了什么」。二者分开注入。
 
 ## 2. Function Calling 工具表
 
 | tier | 模块 | 说明 |
 |------|------|------|
-| core | `planning` | 多步任务：只交详细自然语言；质询/进度进 **main 时间线**（富消息）；模型只见最终结构化结果 |
-| core | `executor` | 单步任务；经现有安检；亦可作 planning 失效时的 ReAct 退化 |
-| core | `rag` | `query`（topK）与 `chat` 均开放，模型自选；main **不**往 RAG 入库 |
-| core | `env` | 主动工具：`collect` / `summary` / `screenshot` / `camera` 等；**后台静默 system_status 不进主对话时间线** |
-| extension | `crawler` | 返回抓取内容；可继续扩展新模块（manifest + local_bus 注册） |
+| core | `planning` | 多步任务：只交详细自然语言；质询/进度进 **main 时间线**；模型只见最终结构化结果 |
+| core | `executor` | 单步任务；经现有安检 |
+| core | `rag` | `query` / `chat`；main **不**往 RAG 入库 |
+| core | `env` | `collect` / `summary` / `screenshot` / `camera`；静默 `system_status` 不进主时间线 |
+| extension | `crawler` | 抓取内容 |
 
-路由：单动作偏 executor、多动作 planning；**全模型选择**，误调 planning 可接受。  
-planning 进行中：**阻塞** main 的 FC 环；中间过程不进模型上下文。
-
-Planning 回传给模型：`summary` + 结构化（成功/失败、关键路径、产出文件、错误摘要）。
+`emotion` / `conversation_manager` / `memory` / `security` / `processor` **不是** FC 工具。
 
 ## 3. Conversation Manager
 
-### 3.1 程序态（无需 LLM）
+### 3.1 程序态
 
-- token 用量 / 剩余比例、turn 计数、距上次 State 更新轮数  
-- 最近工具调用、planning/executor 结果摘要、文件变化事件  
-- 模块操作审计日志（**仅 UI/调试**，不进主模型上下文）
+- token 用量、turn 计数、距上次 State 更新轮数  
+- 工具 / planning / executor 结果摘要、文件变化  
+- 模块审计日志（仅 UI，不进主模型）
 
 ### 3.2 两级触发
 
-1. **规则过滤器**（默认跳过 Analyzer）：上下文压力、本轮过长、planning/executor 完成、文件变化、主题切换启发、长时间未更新 State 等。  
-2. **Analyzer**（仅规则命中）：轻量更新滚动 Conversation State；或上下文将尽时一次产出 Summary / State / Memory Candidates / Open Tasks / Important Files。
-
-**不**因 processor 完成触发 Analyzer。
+1. 规则过滤器 → 2. Analyzer（`conversation.analyze`）更新 State / Summary / Memory Candidates / Open Tasks。
 
 ### 3.3 Open Tasks
 
-只保存；用户明确「继续 / 接着做」时由 **main FC** 调 planning。Manager **永不**直接调用 planning。
+只保存；用户说「继续」时由 **main FC** 调 planning。
 
-### 3.4 主模型默认上下文
+## 4. Mind（emotion）
 
-`Conversation State` + `Conversation Summary` + 最近几轮聊天 + 当前工具结果。  
-不加载完整模块日志。
+### 4.1 程序态
 
-## 4. UI
+- 情绪 intensity 衰减；过低回落「平静」  
+- 熟悉度按轮次累计  
+- work_mode 可由 planning/executor 结果推断  
+- 只读 CM 的 topic/project，不双写任务事实  
+
+### 4.2 Analyzer（`mind.analyze`）
+
+规则命中（工具完成、长轮、情感启发词、模式切换、过期）后，LLM 建议 mood/intensity/vibe/behavior_hints；强度有最大步长。  
+无事件时不调 LLM，只衰减。
+
+### 4.3 人格与开关
+
+- YAML/JSON：`modules/emotion/personas/`，`LA_EMOTION_PERSONA`；见 `PERSONA.md`。
+- **总开关**：默认关闭。关闭时主对话不注入 Mind、不跑状态更新。`LA_EMOTION_ENABLED` 或工作台开关（`data/emotion/enabled.json`）。
+
+## 5. 主模型默认上下文
+
+`Tool Policy（SYSTEM_PROMPT）` + `Mind Context` + `Conversation State/Summary/Open Tasks` + 最近几轮 + 当前工具结果。
+
+## 6. UI
 
 | 频道 | 内容 |
 |------|------|
-| `main` | 用户/助手文本；工具结果；planning 质询/进度/结果等富消息 |
-| `conversation_manager` | `cm_snapshot` 全量指标与 Analyzer 产出（工作台只读） |
-| `env` | 仍可接收静默采集；与主对话隔离 |
+| `main` | 用户/助手文本；工具与 planning 富消息 |
+| `conversation_manager` | `cm_snapshot` |
+| `emotion` | `persona_state`（mood/text；不触发未读） |
+| `env` | 静默采集，与主对话隔离 |
 
-## 5. 落地进度
+## 7. 落地进度
 
-- [x] `jarvis` → `main` 注册与默认选中  
-- [x] `conversation_manager` 注册 + Web 工作台骨架  
-- [x] Local_agent 模块骨架、`local_bus`、工具注册表、规则求值  
-- [x] main FC 循环 + LLM slot `main.chat`  
-- [x] Analyzer LLM（`conversation.analyze`）+ 记忆候选 `observe`  
-- [x] planning 黑盒桥接到 main 时间线（质询等待 / 自动 env_probe / 出图执行）  
+- [x] `main` / `conversation_manager` / planning 黑盒  
+- [x] Mind 模块骨架、规则、衰减、`mind.analyze`、main 注入与轮末通知  
+- [x] `persona_state` 推送  
+- [x] 人格 YAML/JSON 加载器与热切换（见 PERSONA.md）  
 - [ ] 扩展模块即插即用扫描完善  
-- [ ] 主对话富消息组件（clarify / progress）专用渲染  
-- [ ] Open Tasks「继续」语义检测与注入增强  
+- [x] 主对话富消息专用渲染（execution_log / system_status；截图/拍照沿用专用卡片）  
+- [ ] Open Tasks「继续」语义增强  
 
-详见各模块 `README.md` / `INTEGRATION.md`。
+详见 `modules/*/README.md` / `INTEGRATION.md`。

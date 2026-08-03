@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import uuid
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
@@ -15,7 +16,9 @@ from shared.local_bus import LocalBusError, call
 
 logger = logging.getLogger(__name__)
 
-PushFn = Callable[[str, dict[str, Any]], Awaitable[None]]
+# push(msg_type, message, msg_id=None) -> message_id
+PushFn = Callable[..., Awaitable[Any]]
+UpdateFn = Callable[[str, dict[str, Any]], Awaitable[None]]
 PlanningRunner = Callable[[str, str], Awaitable[ToolResultForModel]]
 
 
@@ -32,17 +35,46 @@ def _guess_url(text: str) -> str:
     return m.group(0) if m else ""
 
 
+def _tool_msg_id(tool: str, request_id: str) -> str:
+    rid = (request_id or "").strip() or uuid.uuid4().hex[:10]
+    return f"main_tool_{tool}_{rid}"
+
+
 class ToolRuntime:
     def __init__(
         self,
         *,
         push: PushFn | None = None,
+        update: UpdateFn | None = None,
         run_planning: PlanningRunner | None = None,
         session_id: str = "default",
     ) -> None:
         self.push = push
+        self.update = update
         self.run_planning = run_planning
         self.session_id = session_id
+
+    async def _push_card(self, msg_type: str, message: dict[str, Any], *, msg_id: str) -> str:
+        if not self.push:
+            return msg_id
+        try:
+            result = await self.push(msg_type, message, msg_id=msg_id)
+            return str(result or msg_id)
+        except TypeError:
+            # 兼容旧 push(signature) 不接受 msg_id
+            await self.push(msg_type, message)
+            return msg_id
+        except Exception:
+            logger.exception("tool card push failed")
+            return msg_id
+
+    async def _update_card(self, msg_id: str, message: dict[str, Any]) -> None:
+        if not self.update or not msg_id:
+            return
+        try:
+            await self.update(msg_id, message)
+        except Exception:
+            logger.exception("tool card update failed: %s", msg_id)
 
     async def invoke(self, name: str, arguments: dict[str, Any], *, request_id: str = "") -> ToolResultForModel:
         try:
@@ -55,13 +87,13 @@ class ToolRuntime:
             if name == "rag_chat":
                 return await self._rag_chat(arguments)
             if name == "env_collect":
-                return await self._env_collect()
+                return await self._env_collect(request_id=request_id)
             if name == "env_summary":
-                return await self._env_summary()
+                return await self._env_summary(request_id=request_id)
             if name == "env_screenshot":
-                return await self._env_capture("screenshot")
+                return await self._env_capture("screenshot", request_id=request_id)
             if name == "env_camera":
-                return await self._env_capture("camera")
+                return await self._env_capture("camera", request_id=request_id)
             if name == "crawler_fetch":
                 return await self._crawler(arguments, request_id=request_id)
             return ToolResultForModel(ok=False, tool=name, error=f"未知工具: {name}")
@@ -83,11 +115,30 @@ class ToolRuntime:
         instruction = str(args.get("instruction") or args.get("task") or "").strip()
         if not instruction:
             return ToolResultForModel(ok=False, tool="executor_run", error="instruction 不能为空")
+
+        msg_id = _tool_msg_id("executor", request_id)
+        preview = instruction if len(instruction) <= 80 else instruction[:80] + "…"
+        await self._push_card(
+            "execution_log",
+            {
+                "summary": f"执行中: {preview}",
+                "text": f"执行中: {preview}",
+                "status": "running",
+                "log": [f"指令: {instruction}", "等待执行模块…"],
+                "tool": "executor_run",
+                "ok": True,
+                "payload": {"tool": "executor_run", "instruction": instruction},
+                "request_id": request_id,
+            },
+            msg_id=msg_id,
+        )
+
         req = ExecuteRequest(
             action_text=instruction,
             caller_module="main",
             caller_request_id=request_id,
             purpose="main dialogue tool",
+            ui_msg_id=msg_id,
         )
         result: ExecuteResult = await call("executor", "execute", req)
         data = {
@@ -112,17 +163,42 @@ class ToolRuntime:
             if result.ok
             else f"执行失败: {result.reason or result.error or 'unknown'}"
         )
-        if self.push:
-            await self.push(
-                "tool_result",
-                {
-                    "text": summary,
-                    "tool": "executor_run",
-                    "ok": result.ok,
-                    "data": data,
-                    "request_id": request_id,
-                },
-            )
+        log_lines: list[str] = [f"指令: {instruction}"]
+        if result.job_id:
+            try:
+                job_lines = await call("executor", "read_log", result.job_id, tail=200)
+                if isinstance(job_lines, list) and job_lines:
+                    log_lines.extend(str(x) for x in job_lines)
+            except Exception:
+                logger.debug("read executor log failed", exc_info=True)
+        if result.action_type and not any("action_type" in ln for ln in log_lines):
+            log_lines.append(f"action_type: {result.action_type}")
+        if result.stdout and not any(str(result.stdout).rstrip()[:40] in ln for ln in log_lines if ln):
+            log_lines.append(str(result.stdout).rstrip())
+        if result.stderr:
+            log_lines.append(f"[stderr]\n{str(result.stderr).rstrip()}")
+        if result.files_touched:
+            log_lines.append("files: " + ", ".join(str(p) for p in result.files_touched))
+        if result.error and not result.ok:
+            log_lines.append(f"[error] {result.error}")
+        if result.reason and not result.ok:
+            log_lines.append(f"[reason] {result.reason}")
+        if len(log_lines) <= 1:
+            log_lines.append("(无额外输出)")
+
+        await self._update_card(
+            msg_id,
+            {
+                "summary": summary,
+                "text": summary,
+                "status": "completed" if result.ok else "failed",
+                "log": log_lines,
+                "tool": "executor_run",
+                "ok": result.ok,
+                "payload": {"job_id": result.job_id, "result": data, "tool": "executor_run"},
+                "request_id": request_id,
+            },
+        )
         return ToolResultForModel(
             ok=bool(result.ok),
             tool="executor_run",
@@ -190,7 +266,21 @@ class ToolRuntime:
             )
         return ToolResultForModel(ok=True, tool="rag_chat", summary=summary or "(空回答)", data=data)
 
-    async def _env_collect(self) -> ToolResultForModel:
+    async def _env_collect(self, *, request_id: str = "") -> ToolResultForModel:
+        msg_id = _tool_msg_id("env_collect", request_id)
+        await self._push_card(
+            "system_status",
+            {
+                "text": "正在采集环境快照…",
+                "report_type": "snapshot",
+                "tool": "env_collect",
+                "alert": False,
+                "alert_reason": "",
+                "status": "running",
+                "snapshot": {},
+            },
+            msg_id=msg_id,
+        )
         out = await call("env", "collect_once", push=False)
         snap = out.get("snapshot") if isinstance(out, dict) else out
         summary = "已采集环境快照"
@@ -201,25 +291,99 @@ class ToolRuntime:
                 f"进程数 top={len(snap.get('top_processes') or [])}"
             )
         data = {"snapshot": snap}
-        if self.push:
-            await self.push(
-                "tool_result",
-                {"text": summary, "tool": "env_collect", "ok": True, "data": {"summary": summary}},
-            )
+        snap_dict = snap if isinstance(snap, dict) else {}
+        await self._update_card(
+            msg_id,
+            {
+                "text": summary,
+                "report_type": "snapshot",
+                "tool": "env_collect",
+                "alert": False,
+                "alert_reason": "",
+                "snapshot": {
+                    "cpu_percent": snap_dict.get("cpu_percent"),
+                    "memory_percent": snap_dict.get("memory_percent"),
+                    "memory_used_gb": snap_dict.get("memory_used_gb"),
+                    "memory_total_gb": snap_dict.get("memory_total_gb"),
+                    "disks": snap_dict.get("disks"),
+                    "network": snap_dict.get("network"),
+                    "top_processes": snap_dict.get("top_processes"),
+                    "timestamp_iso": snap_dict.get("timestamp_iso"),
+                },
+            },
+        )
         return ToolResultForModel(ok=True, tool="env_collect", summary=summary, data=data)
 
-    async def _env_summary(self) -> ToolResultForModel:
+    async def _env_summary(self, *, request_id: str = "") -> ToolResultForModel:
+        msg_id = _tool_msg_id("env_summary", request_id)
+        await self._push_card(
+            "system_status",
+            {
+                "text": "正在生成环境摘要…",
+                "report_type": "summary",
+                "tool": "env_summary",
+                "alert": False,
+                "alert_reason": "",
+                "status": "running",
+                "snapshot": {},
+            },
+            msg_id=msg_id,
+        )
         out = await call("env", "run_summary", push=False)
         llm_summary = out.get("llm_summary") if isinstance(out, dict) else {}
         text = ""
         if isinstance(llm_summary, dict):
             text = str(llm_summary.get("text") or llm_summary.get("summary") or "")
         summary = _truncate(text or "环境摘要已生成", 1200)
-        if self.push:
-            await self.push(
-                "tool_result",
-                {"text": summary, "tool": "env_summary", "ok": True, "data": out if isinstance(out, dict) else {}},
-            )
+        out_dict = out if isinstance(out, dict) else {}
+        snap_dict = out_dict.get("snapshot") if isinstance(out_dict.get("snapshot"), dict) else {}
+        agg = out_dict.get("aggregated") if isinstance(out_dict.get("aggregated"), dict) else {}
+        if not snap_dict and agg:
+            def _avg(val: Any) -> Any:
+                if isinstance(val, dict):
+                    return val.get("avg")
+                return val
+
+            snap_dict = {
+                "cpu_percent": _avg(agg.get("cpu_percent")),
+                "memory_percent": _avg(agg.get("memory_percent")),
+                "memory_used_gb": agg.get("memory_used_gb"),
+                "memory_total_gb": agg.get("memory_total_gb"),
+                "disks": agg.get("disks"),
+                "network": None,
+                "top_processes": [
+                    {
+                        "name": p.get("name"),
+                        "pid": p.get("pid"),
+                        "cpu_percent": p.get("cpu_percent_avg"),
+                        "memory_percent": p.get("memory_percent_avg"),
+                    }
+                    for p in (agg.get("top_processes") or [])[:8]
+                    if isinstance(p, dict)
+                ],
+            }
+        await self._update_card(
+            msg_id,
+            {
+                "text": summary,
+                "report_type": "summary",
+                "tool": "env_summary",
+                "alert": bool(out_dict.get("alert_active")),
+                "alert_reason": "",
+                "snapshot": {
+                    "cpu_percent": snap_dict.get("cpu_percent"),
+                    "memory_percent": snap_dict.get("memory_percent"),
+                    "memory_used_gb": snap_dict.get("memory_used_gb"),
+                    "memory_total_gb": snap_dict.get("memory_total_gb"),
+                    "disks": snap_dict.get("disks"),
+                    "network": snap_dict.get("network"),
+                    "top_processes": snap_dict.get("top_processes"),
+                    "timestamp_iso": snap_dict.get("timestamp_iso"),
+                },
+                "aggregated": agg or None,
+                "llm_summary": llm_summary if isinstance(llm_summary, dict) else {"text": summary},
+            },
+        )
         return ToolResultForModel(
             ok=True,
             tool="env_summary",
@@ -227,25 +391,34 @@ class ToolRuntime:
             data=out if isinstance(out, dict) else {"raw": out},
         )
 
-    async def _env_capture(self, kind: str) -> ToolResultForModel:
+    async def _env_capture(self, kind: str, *, request_id: str = "") -> ToolResultForModel:
         method = "take_screenshot" if kind == "screenshot" else "take_camera_photo"
         tool = "env_screenshot" if kind == "screenshot" else "env_camera"
+        msg_type = "desktop_screenshot" if kind == "screenshot" else "camera_capture"
+        label = "截图" if kind == "screenshot" else "拍照"
+        msg_id = _tool_msg_id(tool, request_id)
+        await self._push_card(
+            msg_type,
+            {
+                "text": f"正在{label}…",
+                "capture_type": "desktop" if kind == "screenshot" else "camera",
+                "status": "running",
+            },
+            msg_id=msg_id,
+        )
         out = await call("env", method, push=False)
         path = ""
         if isinstance(out, dict):
             path = str(out.get("saved_path") or "")
-        summary = f"{'截图' if kind == 'screenshot' else '拍照'}完成" + (f"：{path}" if path else "")
-        msg_type = "desktop_screenshot" if kind == "screenshot" else "camera_capture"
-        if self.push and isinstance(out, dict):
-            await self.push(
-                msg_type,
-                {
-                    "text": summary,
-                    "capture_type": "desktop" if kind == "screenshot" else "camera",
-                    "saved_path": path,
-                    **{k: v for k, v in out.items() if k not in ("text",)},
-                },
-            )
+        summary = f"{label}完成" + (f"：{path}" if path else "")
+        final_msg = {
+            "text": summary,
+            "capture_type": "desktop" if kind == "screenshot" else "camera",
+            "saved_path": path,
+        }
+        if isinstance(out, dict):
+            final_msg.update({k: v for k, v in out.items() if k not in ("text",)})
+        await self._update_card(msg_id, final_msg)
         return ToolResultForModel(ok=True, tool=tool, summary=summary, data=out if isinstance(out, dict) else {})
 
     async def _crawler(self, args: dict[str, Any], *, request_id: str) -> ToolResultForModel:
@@ -258,14 +431,32 @@ class ToolRuntime:
                 task = raw
         if not url or urlparse(url).scheme not in ("http", "https"):
             return ToolResultForModel(ok=False, tool="crawler_fetch", error="需要有效的 http(s) URL")
+
+        msg_id = _tool_msg_id("crawler", request_id)
+        await self._push_card(
+            "execution_log",
+            {
+                "summary": f"爬取中: {url}",
+                "text": f"爬取中: {url}",
+                "status": "running",
+                "log": [f"url: {url}"] + ([f"task: {task}"] if task else []) + ["等待爬取模块…"],
+                "tool": "crawler_fetch",
+                "ok": True,
+                "payload": {"tool": "crawler_fetch", "url": url},
+                "request_id": request_id,
+            },
+            msg_id=msg_id,
+        )
+
         outcome = await call(
             "crawler",
             "submit_crawl",
             url,
             task=task,
-            notify=False,
+            notify=True,
             request_id=request_id,
             use_model=True,
+            ui_msg_id=msg_id,
         )
         ok = bool(outcome.get("success")) if isinstance(outcome, dict) else False
         result = (outcome.get("result") if isinstance(outcome, dict) else None) or {}
@@ -280,11 +471,33 @@ class ToolRuntime:
             "error": outcome.get("error") if isinstance(outcome, dict) else "",
             "job_id": outcome.get("job_id") if isinstance(outcome, dict) else "",
         }
-        if self.push:
-            await self.push(
-                "tool_result",
-                {"text": summary, "tool": "crawler_fetch", "ok": ok, "data": data, "request_id": request_id},
-            )
+        crawl_log = outcome.get("log", []) if isinstance(outcome, dict) else []
+        if not isinstance(crawl_log, list):
+            crawl_log = [str(crawl_log)]
+        if not crawl_log:
+            crawl_log = [f"url: {url}", summary]
+        await self._update_card(
+            msg_id,
+            {
+                "summary": summary,
+                "text": summary,
+                "status": "completed" if ok else "failed",
+                "log": crawl_log,
+                "tool": "crawler_fetch",
+                "ok": ok,
+                "payload": {
+                    "job_id": data.get("job_id"),
+                    "result": {
+                        "url": url,
+                        "title": title,
+                        "content": content,
+                        "error": data.get("error"),
+                    },
+                    "tool": "crawler_fetch",
+                },
+                "request_id": request_id,
+            },
+        )
         return ToolResultForModel(
             ok=ok,
             tool="crawler_fetch",

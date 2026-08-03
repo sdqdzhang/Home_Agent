@@ -2,6 +2,7 @@
 import MessageItem from './MessageItem.vue'
 import ModuleEmpty from './ModuleEmpty.vue'
 import { useChatScroll } from '../utils/useChatScroll.js'
+import { formatWeChatTimeLabel, shouldShowWeChatTimeDivider } from '../utils/messages.js'
 
 const props = defineProps({
   messages: { type: Array, default: () => [] },
@@ -18,6 +19,12 @@ defineExpose({ scrollToBottom })
 function onResponded(msg) {
   emit('responded', msg)
 }
+
+function showTimeDivider(index) {
+  const curr = props.messages[index]
+  const prev = index > 0 ? props.messages[index - 1] : null
+  return shouldShowWeChatTimeDivider(prev?.timestamp, curr?.timestamp)
+}
 </script>
 
 <template>
@@ -27,12 +34,20 @@ function onResponded(msg) {
     </div>
     <ModuleEmpty v-else-if="!messages.length && agent" :agent="agent" />
     <div v-else class="mx-auto flex max-w-3xl flex-col gap-4">
-      <MessageItem
-        v-for="msg in messages"
-        :key="msg.id"
-        :msg="msg"
-        @responded="onResponded"
-      />
+      <template v-for="(msg, index) in messages" :key="msg.id">
+        <div
+          v-if="showTimeDivider(index)"
+          class="flex justify-center py-1"
+        >
+          <span class="rounded-md bg-slate-800/60 px-2.5 py-0.5 text-[11px] text-slate-400">
+            {{ formatWeChatTimeLabel(msg.timestamp) }}
+          </span>
+        </div>
+        <MessageItem
+          :msg="msg"
+          @responded="onResponded"
+        />
+      </template>
     </div>
   </div>
 </template>

@@ -27,6 +27,8 @@ class ExecuteRequest(BaseModel):
     caller_request_id: str = ""
     purpose: str = ""
     file_content: str | None = None
+    # 主对话等调用方创建的 UI 消息 id：执行过程原地更新该卡片，便于边跑边看
+    ui_msg_id: str = ""
 
 
 class ShellRunAction(BaseModel):
