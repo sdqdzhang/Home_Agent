@@ -47,3 +47,4 @@ Local Agent（FastAPI 单进程）
 - [主对话设计](Local_agent/docs/main-conversation.md) — FC 工具表与会话管理
 - [模块通信约定](Local_agent/docs/module-communication.md)
 - [Server Center README](Server_center/README.md) — 消息协议与 Web UI
+- [远程 mTLS 部署与运维](docs/remote-mtls.md) — 域名 + 客户端证书（方案 A，目标态）

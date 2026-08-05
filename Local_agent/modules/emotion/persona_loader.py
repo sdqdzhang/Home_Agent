@@ -139,6 +139,7 @@ def parse_persona_dict(data: dict[str, Any], *, source_path: str = "") -> Person
         "style",
         "prohibitions",
         "ui",
+        "event_hints",
     }
     configured = [k for k in known if k in data]
     extra = {k: v for k, v in data.items() if k not in known}

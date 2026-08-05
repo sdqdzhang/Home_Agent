@@ -306,11 +306,13 @@ class MainService:
         sess.stamped_user_text = stamped_user
         manager_ctx = await self._manager_context(sess.session_id)
         mind_ctx = await self._mind_context(sess.session_id)
+        memory_ctx = await self._memory_context(user_text)
         messages = self.assistant.build_messages(
             user_text=stamped_user,
             history=sess.history,
             manager_ctx=manager_ctx,
             mind_ctx=mind_ctx,
+            memory_ctx=memory_ctx,
         )
 
         async def run_planning(task: str, request_id: str) -> ToolResultForModel:
@@ -463,7 +465,11 @@ class MainService:
         total = int(usage.get("total_tokens") or 0)
         if total <= 0:
             total = _estimate_tokens(user_text) + _estimate_tokens(text)
-        sess.context_used_tokens = min(sess.context_limit_tokens, sess.context_used_tokens // 2 + total)
+        # 进度条用本轮最大 prompt_tokens（真实上下文占用），不用多轮 FC 累加值
+        used = int(usage.get("max_prompt_tokens") or 0)
+        if used <= 0:
+            used = min(sess.context_limit_tokens, total)
+        sess.context_used_tokens = min(sess.context_limit_tokens, used)
 
         planning_done = any(t.get("tool") == "planning_run" for t in tool_trace)
         executor_done = any(t.get("tool") == "executor_run" for t in tool_trace)
@@ -580,6 +586,13 @@ class MainService:
             return await call("conversation_manager", "context_for_main", session_id)
         except Exception:
             logger.exception("context_for_main failed")
+            return {}
+
+    async def _memory_context(self, user_text: str) -> dict[str, Any]:
+        try:
+            return await call("memory", "context_for_main", user_text)
+        except Exception:
+            logger.exception("memory.context_for_main failed")
             return {}
 
     async def _mind_context(self, session_id: str) -> dict[str, Any]:

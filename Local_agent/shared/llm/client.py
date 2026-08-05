@@ -1,14 +1,24 @@
 from __future__ import annotations
 
-import json
+import logging
 from typing import Any
 
 from openai import AsyncOpenAI
 
 from shared.llm.config import LLMSettings, llm_settings
+from shared.llm.dsml import heal_dsml_message
+from shared.llm.json_parse import as_json_object, try_parse_pipeline
 from shared.llm.registry import get_model_registry
 from shared.llm.schemas import ResolvedLLMConfig
 from shared.llm.slots import DEFAULT_CHAT_SLOT
+
+logger = logging.getLogger(__name__)
+
+_JSON_RETRY_USER = (
+    "上次输出的内容无法解析为合法 JSON。\n"
+    "解析错误：{error}\n\n"
+    "请只重新输出一个合法 JSON 对象，不要 markdown 代码块，不要解释文字。"
+)
 
 
 class LLMClient:
@@ -67,6 +77,7 @@ class LLMClient:
         json_mode: bool = False,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """返回 assistant message 字典（含 content / tool_calls）。"""
         cfg = self.resolve_config()
@@ -84,6 +95,13 @@ class LLMClient:
             kwargs["max_tokens"] = tokens
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
+            # DeepSeek V4 默认 thinking：推理 token 吃光 max_tokens 时 content 为空。
+            # 结构化 JSON 抽取不需要思维链，显式关闭。
+            body = dict(extra_body or {})
+            body.setdefault("thinking", {"type": "disabled"})
+            kwargs["extra_body"] = body
+        elif extra_body:
+            kwargs["extra_body"] = extra_body
         if tools:
             kwargs["tools"] = tools
             if tool_choice is not None:
@@ -91,25 +109,40 @@ class LLMClient:
 
         response = await client.chat.completions.create(**kwargs)
         msg = response.choices[0].message
+        content = msg.content or ""
+        if not content.strip():
+            finish = getattr(response.choices[0], "finish_reason", None)
+            reasoning = getattr(msg, "reasoning_content", None) or ""
+            if reasoning:
+                logger.warning(
+                    "LLM returned empty content (finish_reason=%s, reasoning_tokens~%s); "
+                    "structured calls should disable thinking",
+                    finish,
+                    len(reasoning),
+                )
+            elif finish == "length":
+                logger.warning("LLM returned empty content with finish_reason=length")
+        raw_calls = getattr(msg, "tool_calls", None) or []
+        tool_calls: list[dict[str, Any]] = []
+        for tc in raw_calls:
+            fn = getattr(tc, "function", None)
+            tool_calls.append(
+                {
+                    "id": getattr(tc, "id", "") or "",
+                    "type": "function",
+                    "function": {
+                        "name": getattr(fn, "name", "") if fn else "",
+                        "arguments": getattr(fn, "arguments", "") if fn else "",
+                    },
+                }
+            )
+        # DeepSeek V4 偶发把 DSML 工具标记写进 content；剥离并在无结构化调用时回填
+        content, tool_calls = heal_dsml_message(content, tool_calls)
         out: dict[str, Any] = {
             "role": "assistant",
-            "content": msg.content or "",
+            "content": content,
         }
-        raw_calls = getattr(msg, "tool_calls", None) or []
-        if raw_calls:
-            tool_calls: list[dict[str, Any]] = []
-            for tc in raw_calls:
-                fn = getattr(tc, "function", None)
-                tool_calls.append(
-                    {
-                        "id": getattr(tc, "id", "") or "",
-                        "type": "function",
-                        "function": {
-                            "name": getattr(fn, "name", "") if fn else "",
-                            "arguments": getattr(fn, "arguments", "") if fn else "",
-                        },
-                    }
-                )
+        if tool_calls:
             out["tool_calls"] = tool_calls
         usage = getattr(response, "usage", None)
         if usage is not None:
@@ -145,22 +178,55 @@ class LLMClient:
         model: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        max_retries: int | None = None,
+        repair_enabled: bool | None = None,
     ) -> dict[str, Any]:
-        raw = await self.chat(
-            messages,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            json_mode=True,
-        )
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            start = raw.find("{")
-            end = raw.rfind("}")
-            if start >= 0 and end > start:
-                return json.loads(raw[start : end + 1])
-            raise
+        """
+        请求 JSON 对象。解析顺序：strict → 启发式 → json_repair → LLM 纠错重试。
+        """
+        cfg = self._static_config or llm_settings
+        use_repair = cfg.json_repair_enabled if repair_enabled is None else repair_enabled
+        retries = cfg.json_max_retries if max_retries is None else max_retries
+        if retries < 0:
+            retries = 0
+
+        conversation: list[dict[str, str]] = [dict(m) for m in messages]
+        last_error = "unknown"
+
+        for attempt in range(retries + 1):
+            raw = await self.chat(
+                conversation,
+                model=model,
+                temperature=0.0 if attempt > 0 else temperature,
+                max_tokens=max_tokens,
+                json_mode=True,
+            )
+            obj, err = try_parse_pipeline(raw, repair_enabled=use_repair)
+            data = as_json_object(obj)
+            if data is not None:
+                if attempt > 0:
+                    logger.info("chat_json recovered via llm_retry attempt=%s", attempt)
+                return data
+
+            last_error = err or "expected JSON object"
+            if obj is not None and not isinstance(obj, dict):
+                last_error = f"expected JSON object, got {type(obj).__name__}"
+
+            if attempt >= retries:
+                break
+
+            logger.warning(
+                "chat_json parse failed (attempt=%s), requesting llm retry: %s",
+                attempt,
+                last_error,
+            )
+            conversation = [
+                *conversation,
+                {"role": "assistant", "content": raw},
+                {"role": "user", "content": _JSON_RETRY_USER.format(error=last_error)},
+            ]
+
+        raise ValueError(f"LLM JSON parse failed after {retries + 1} attempt(s): {last_error}")
 
 
 _clients_by_slot: dict[str, LLMClient] = {}

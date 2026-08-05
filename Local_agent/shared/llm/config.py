@@ -16,6 +16,9 @@ class LLMSettings(BaseSettings):
     timeout: float = 120.0
     max_tokens: int = 4096
     temperature: float = 0.2
+    # chat_json：脏 JSON 修复与纠错重试
+    json_repair_enabled: bool = True
+    json_max_retries: int = 1
     db_path: Path = app_settings.data_dir / "llm.db"
 
 

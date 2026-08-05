@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -31,6 +32,7 @@ class _SessionRuntime:
     def __init__(self, session_id: str) -> None:
         self.session_id = session_id
         self.turn_index = 0
+        self.committed_turn = 0
         self.turns_since_state_update = 0
         self.state = ConversationState()
         self.summary = ""
@@ -51,12 +53,19 @@ class ConversationManagerService:
         self.server = server_client
         self.analyzer = ConversationAnalyzer()
         self._sessions: dict[str, _SessionRuntime] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
 
     def _session(self, session_id: str) -> _SessionRuntime:
         sid = session_id or "default"
         if sid not in self._sessions:
             self._sessions[sid] = _SessionRuntime(sid)
         return self._sessions[sid]
+
+    def _lock(self, session_id: str) -> asyncio.Lock:
+        sid = session_id or "default"
+        if sid not in self._locks:
+            self._locks[sid] = asyncio.Lock()
+        return self._locks[sid]
 
     def get_snapshot(self, session_id: str = "default") -> ManagerSnapshot:
         rt = self._session(session_id)
@@ -75,8 +84,22 @@ class ConversationManagerService:
         if isinstance(event, dict):
             event = TurnEndEvent.model_validate(event)
 
+        async with self._lock(event.session_id):
+            return await self._on_turn_end_locked(event)
+
+    async def _on_turn_end_locked(self, event: TurnEndEvent) -> ManagerSnapshot:
         rt = self._session(event.session_id)
-        rt.turn_index = event.turn_index or (rt.turn_index + 1)
+        turn = event.turn_index or (rt.turn_index + 1)
+        if turn < rt.committed_turn:
+            logger.warning(
+                "skip stale turn_end session=%s turn=%s committed=%s",
+                event.session_id,
+                turn,
+                rt.committed_turn,
+            )
+            return self._build_snapshot(rt)
+
+        rt.turn_index = turn
         rt.context_used_tokens = event.context_used_tokens
         rt.context_limit_tokens = event.context_limit_tokens
         rt.turns_since_state_update += 1
@@ -85,6 +108,20 @@ class ConversationManagerService:
             rt.recent_tool_calls = (rt.recent_tool_calls + event.tool_calls)[-20:]
         if event.module_log_entries:
             rt.module_log_tail = (rt.module_log_tail + event.module_log_entries)[-MODULE_LOG_TAIL:]
+
+        # 工具确定事实：程序直接写入，不依赖 Analyzer 再判断「是否完成」
+        if event.planning_completed or event.executor_completed:
+            bits: list[str] = []
+            if event.planning_completed:
+                bits.append("planning 本轮已完成")
+            if event.executor_completed:
+                bits.append("executor 本轮已完成")
+            if event.files_changed:
+                bits.append("涉及文件: " + ", ".join(event.files_changed[:8]))
+            progress = "；".join(bits)
+            if progress:
+                prev = (rt.state.task_progress or "").strip()
+                rt.state.task_progress = progress if not prev else f"{prev} | {progress}"
 
         rules = evaluate_triggers(
             event,
@@ -118,12 +155,13 @@ class ConversationManagerService:
         else:
             rt.last_analyzer_mode = "none"
 
+        rt.committed_turn = turn
         snap = self._build_snapshot(rt)
         await self._push_snapshot(snap)
         return snap
 
     async def _persist_memory_candidates(self, candidates: list[MemoryCandidate]) -> None:
-        """去重粗略后写入 memory.observe（不经主对话 FC）。"""
+        """去重粗略后写入 memory.observe（不经主对话 FC）；低分会被 Memory 拒绝。"""
         seen: set[str] = set()
         for c in candidates:
             content = (c.content or "").strip()
@@ -133,7 +171,7 @@ class ConversationManagerService:
             try:
                 from modules.memory.schemas import ObserveRequest
 
-                await call(
+                result = await call(
                     "memory",
                     "observe",
                     ObserveRequest(
@@ -143,6 +181,14 @@ class ConversationManagerService:
                         metadata={"source": "cm_analyzer"},
                     ),
                 )
+                if isinstance(result, dict):
+                    accepted = bool(result.get("accepted", True))
+                    reason = str(result.get("rejected_reason") or "")
+                else:
+                    accepted = bool(getattr(result, "accepted", True))
+                    reason = str(getattr(result, "rejected_reason", "") or "")
+                if not accepted:
+                    logger.info("memory candidate rejected by observe: %s | %s", reason, content[:80])
             except Exception:
                 logger.exception("persist memory candidate failed")
 
