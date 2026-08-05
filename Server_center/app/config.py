@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     db_path: Path = data_dir / "messages.db"
     rsa_key_size: int = 2048
     terminal_enabled: bool = True
+    # Local↔Server 线缆加密（HTTP 响应 + 模块 WS + 终端桥）；UI /local 不受影响
+    wire_encrypt: bool = True
 
 
 settings = Settings()

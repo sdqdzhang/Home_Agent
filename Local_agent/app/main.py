@@ -58,7 +58,11 @@ terminal_bridge: TerminalBridge | None = None
 _ws_listeners: list[WebSocketListener] = []
 
 
-async def _register_module_client(module_name: str, id_prefix: str) -> ServerCenterClient:
+async def _register_module_client(
+    module_name: str,
+    id_prefix: str,
+    *extra_client_ids: str,
+) -> ServerCenterClient:
     private_key, public_key = ensure_client_keys(settings.keys_dir, settings.rsa_key_size)
     client = ServerCenterClient(
         settings.server_center_url,
@@ -66,9 +70,10 @@ async def _register_module_client(module_name: str, id_prefix: str) -> ServerCen
         private_key,
         public_key,
         id_prefix=id_prefix,
+        wire_encrypt=settings.wire_encrypt,
     )
     try:
-        await client.ensure_registered()
+        await client.ensure_registered(*extra_client_ids)
         logger.info("Registered %s with Server Center at %s", module_name, settings.server_center_url)
     except Exception:
         logger.warning("Could not register %s with Server Center (is it running?)", module_name)
@@ -76,8 +81,14 @@ async def _register_module_client(module_name: str, id_prefix: str) -> ServerCen
 
 
 async def _start_ws_listeners(channels: tuple[str, ...], handler) -> None:
+    private_key, _ = ensure_client_keys(settings.keys_dir, settings.rsa_key_size)
     for channel in channels:
-        listener = WebSocketListener(settings.server_center_url, channel)
+        listener = WebSocketListener(
+            settings.server_center_url,
+            channel,
+            private_key=private_key,
+            wire_encrypt=settings.wire_encrypt,
+        )
         listener.on_message(handler)
         await listener.start()
         _ws_listeners.append(listener)
@@ -122,18 +133,19 @@ async def lifespan(_: FastAPI):
     if registry.ensure_seeded():
         logger.info("LLM config DB seeded from .env defaults")
 
-    crawler_client = await _register_module_client("网页爬取模块", "crawler")
-    env_client = await _register_module_client("环境感知模块", "env")
-    rag_client = await _register_module_client("RAG模块", "rag")
-    security_client = await _register_module_client("安全检查模块", "security")
-    memory_client = await _register_module_client("记忆模块", "memory")
-    executor_client = await _register_module_client("执行模块", "executor")
-    processor_client = await _register_module_client("处理", "processor")
-    planning_client = await _register_module_client("规划模块", "planning")
-    main_client = await _register_module_client("主对话", "main")
-    cm_client = await _register_module_client("会话管理", "cm")
-    emotion_client = await _register_module_client("情感与性格状态模块", "emotion")
-    llm_client = await _register_module_client("本地Agent", "llm")
+    crawler_client = await _register_module_client("网页爬取模块", "crawler", CRAWLER_ID)
+    env_client = await _register_module_client("环境感知模块", "env", ENV_ID)
+    rag_client = await _register_module_client("RAG模块", "rag", RAG_ID)
+    security_client = await _register_module_client("安全检查模块", "security", SECURITY_ID, SECURITY_NAME)
+    memory_client = await _register_module_client("记忆模块", "memory", MEMORY_ID)
+    executor_client = await _register_module_client("执行模块", "executor", EXECUTOR_ID)
+    processor_client = await _register_module_client("处理", "processor", PROCESSOR_ID)
+    planning_client = await _register_module_client("规划模块", "planning", PLANNING_ID)
+    main_client = await _register_module_client("主对话", "main", MAIN_ID)
+    cm_client = await _register_module_client("会话管理", "cm", CM_ID)
+    emotion_client = await _register_module_client("情感与性格状态模块", "emotion", EMOTION_ID)
+    llm_client = await _register_module_client("本地Agent", "llm", LLM_ID)
+    await _register_module_client("terminal", "terminal")
 
     crawler_service = CrawlerService(server_client=crawler_client)
     env_service = EnvService(server_client=env_client)

@@ -7,7 +7,11 @@ from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
+
+TERMINAL_CLIENT_ID = "terminal"
 
 
 class TerminalRelay:
@@ -25,13 +29,28 @@ class TerminalRelay:
     def agent_connected(self) -> bool:
         return self._agent is not None
 
+    def _encrypt_for_agent(self, data: bytes) -> dict[str, Any] | None:
+        from app.crypto.rsa import encrypt_payload_b64, load_public_key_from_pem
+        from app.services.message_service import message_service
+
+        pem = message_service.get_client_public_key(TERMINAL_CLIENT_ID)
+        if not pem:
+            return None
+        return encrypt_payload_b64(data, load_public_key_from_pem(pem))
+
+    def _decrypt_from_agent(self, payload: dict[str, Any]) -> bytes:
+        from app.crypto.rsa import decrypt_payload_b64
+        from app.main import server_private_key
+
+        return decrypt_payload_b64(payload, server_private_key)
+
     async def attach_agent(self, websocket: WebSocket) -> None:
         await websocket.accept()
         async with self._lock:
             self._agent = websocket
 
         try:
-            await self._agent_send_text(json.dumps({"type": "registered"}, ensure_ascii=False))
+            await self._agent_send_control({"type": "registered"})
             if self._ui is not None:
                 await self._request_session_start(cols=120, rows=30)
             while True:
@@ -39,13 +58,13 @@ class TerminalRelay:
                 if message.get("type") == "websocket.disconnect":
                     break
                 if message.get("bytes") is not None:
+                    if settings.wire_encrypt:
+                        logger.warning("Rejecting plaintext terminal binary from agent")
+                        continue
                     await self._forward_to_ui_bytes(message["bytes"])
                 elif message.get("text"):
                     text = message["text"]
-                    if text.startswith("{"):
-                        await self._forward_to_ui_text(text)
-                    else:
-                        await self._forward_to_ui_bytes(text.encode("utf-8"))
+                    await self._handle_agent_text(text)
         except WebSocketDisconnect:
             pass
         except Exception:
@@ -55,6 +74,45 @@ class TerminalRelay:
                 if self._agent is websocket:
                     self._agent = None
             await self._notify_ui({"type": "agent_disconnected"})
+
+    async def _handle_agent_text(self, text: str) -> None:
+        if not text.startswith("{"):
+            if settings.wire_encrypt:
+                logger.warning("Rejecting plaintext terminal text from agent")
+                return
+            await self._forward_to_ui_bytes(text.encode("utf-8"))
+            return
+
+        try:
+            event = json.loads(text)
+        except json.JSONDecodeError:
+            return
+
+        if settings.wire_encrypt:
+            enc = event.get("enc")
+            if not isinstance(enc, dict):
+                logger.warning("Rejecting plaintext terminal JSON from agent")
+                return
+            try:
+                plain = self._decrypt_from_agent(enc)
+            except Exception:
+                logger.exception("Failed to decrypt terminal frame from agent")
+                return
+            if event.get("bin"):
+                await self._forward_to_ui_bytes(plain)
+                return
+            try:
+                decoded = plain.decode("utf-8")
+            except UnicodeDecodeError:
+                await self._forward_to_ui_bytes(plain)
+                return
+            if decoded.startswith("{"):
+                await self._forward_to_ui_text(decoded)
+            else:
+                await self._forward_to_ui_bytes(plain)
+            return
+
+        await self._forward_to_ui_text(text)
 
     async def attach_ui(self, websocket: WebSocket, *, enabled: bool) -> None:
         await websocket.accept()
@@ -154,7 +212,7 @@ class TerminalRelay:
         if self._agent is None:
             return
         try:
-            await self._agent_send_text(json.dumps(payload, ensure_ascii=False))
+            await self._agent_send_control(payload)
         except Exception:
             logger.exception("Failed to notify terminal agent")
 
@@ -185,14 +243,36 @@ class TerminalRelay:
         if agent is None:
             return
         async with self._agent_send_lock:
-            await agent.send_bytes(data)
+            if settings.wire_encrypt:
+                enc = self._encrypt_for_agent(data)
+                if enc is None:
+                    logger.error("Refusing plaintext terminal bytes to agent (no terminal client key)")
+                    return
+                await agent.send_text(json.dumps({"bin": True, "enc": enc}, ensure_ascii=False))
+            else:
+                await agent.send_bytes(data)
 
-    async def _agent_send_text(self, text: str) -> None:
+    async def _agent_send_control(self, payload: dict[str, Any]) -> None:
         agent = self._agent
         if agent is None:
             return
+        text = json.dumps(payload, ensure_ascii=False)
         async with self._agent_send_lock:
-            await agent.send_text(text)
+            if settings.wire_encrypt:
+                enc = self._encrypt_for_agent(text.encode("utf-8"))
+                if enc is None:
+                    logger.error("Refusing plaintext terminal control to agent (no terminal client key)")
+                    return
+                await agent.send_text(json.dumps({"enc": enc}, ensure_ascii=False))
+            else:
+                await agent.send_text(text)
+
+    async def _agent_send_text(self, text: str) -> None:
+        # kept for compatibility with older call sites
+        try:
+            await self._agent_send_control(json.loads(text) if text.startswith("{") else {"type": "text", "text": text})
+        except json.JSONDecodeError:
+            await self._agent_send_bytes(text.encode("utf-8"))
 
 
 terminal_relay = TerminalRelay()

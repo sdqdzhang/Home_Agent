@@ -22,18 +22,27 @@ await push_to_ui("rag", msg_type="text", message={"text": "...", "role": "agent"
 
 | 方向 | 方式 | 加密 |
 |------|------|------|
-| Local → Server 发消息/回复 | `POST /api/v1/messages` | RSA-OAEP body |
-| Server → Local 拉取 | `GET /messages?encrypted_for=…` | RSA 加密响应 |
-| Server → Local 实时推送 | WebSocket `/ws/{channel}` | 载荷明文；**生产请用 HTTPS/WSS** |
-| Web UI → Server | `/messages/local` | 明文（同域 + HTTPS） |
+| Local → Server 发消息/回复/更新 | `POST/PATCH /api/v1/messages…` | 混合加密 body（RSA-OAEP + AES-256-GCM） |
+| Server → Local HTTP 响应 | 同上接口的响应体 | 按 `X-Client-Id` 用客户端公钥加密 |
+| Server → Local 拉取 | `GET /messages?encrypted_for=…` | 客户端公钥加密响应 |
+| Server → Local 实时推送 | WebSocket `/ws/{channel}` | `enc` 密文（`user_ui` 仍明文给浏览器） |
+| Local ↔ Server 终端桥 | `/ws/terminal_agent` | 控制帧与 PTY 字节均加密 |
+| Web UI → Server | `/messages/local` 等 | 明文（同域；不在本链路范围内） |
 
-### 远程部署（不改代码）
+开关（默认开启，两侧保持一致）：
+
+- Local：`LA_WIRE_ENCRYPT=true`
+- Server：`SC_WIRE_ENCRYPT=true`
+
+关闭后回退旧明文 WS / 明文 HTTP 响应（仅联调回滚用）。
+
+### 远程部署（不改业务代码）
 
 1. Server 前加 Nginx/Caddy，启用 **HTTPS/WSS**
 2. Local `.env`：`LA_SERVER_CENTER_URL=https://你的域名`
 3. Local 只监听本机：`LA_HOST=127.0.0.1`（默认）
 
-`ws_listener` 会根据 `https://` 自动使用 `wss://`。
+`ws_listener` 会根据 `https://` 自动使用 `wss://`。应用层混合加密与传输层 TLS 可叠加。
 
 ## 相关文件
 

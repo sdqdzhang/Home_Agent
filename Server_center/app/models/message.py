@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class MessageBody(BaseModel):
@@ -18,8 +18,17 @@ class InboundMessage(BaseModel):
 
 
 class EncryptedPayload(BaseModel):
+    """RSA-OAEP chunks (legacy) or hybrid RSA-OAEP+AES-GCM (v=1)."""
+
+    model_config = ConfigDict(extra="ignore")
+
     encrypted: str | None = None
     encrypted_chunks: list[str] | None = None
+    v: int | None = None
+    alg: str | None = None
+    ek: str | None = None
+    iv: str | None = None
+    ct: str | None = None
 
 
 class ResponseBody(BaseModel):
