@@ -1,4 +1,4 @@
-"""Mind Analyzer：规则命中后用 LLM 建议情绪/氛围/行为倾向。"""
+"""Mind Analyzer：规则命中后用 LLM 解释事件意义并建议状态。"""
 
 from __future__ import annotations
 
@@ -8,9 +8,15 @@ from typing import Any
 
 from modules.emotion.model import ANALYZE_SYSTEM
 from modules.emotion.schemas import (
+    ALLOWED_AFFECT,
+    ALLOWED_INTERACTION_MODES,
     ALLOWED_MOODS,
+    ALLOWED_PERSISTENCE,
+    ALLOWED_SIGNIFICANCE,
     ALLOWED_WORK_MODES,
+    EVENT_TYPES,
     AnalyzerOutput,
+    MindEvent,
     MindState,
     MindTurnEndEvent,
 )
@@ -31,9 +37,10 @@ class MindAnalyzer:
         prev_state: MindState,
         event: MindTurnEndEvent,
         trigger_rules: list[str],
+        program_events: list[MindEvent] | None = None,
     ) -> AnalyzerOutput:
         try:
-            data = await self._call_llm(prev_state, event, trigger_rules)
+            data = await self._call_llm(prev_state, event, trigger_rules, program_events or [])
         except Exception as exc:
             logger.exception("Mind Analyzer LLM failed")
             return AnalyzerOutput(mode="light", note=f"fallback: {exc}")
@@ -45,10 +52,12 @@ class MindAnalyzer:
         prev_state: MindState,
         event: MindTurnEndEvent,
         trigger_rules: list[str],
+        program_events: list[MindEvent],
     ) -> dict[str, Any]:
         llm = get_llm_client(self.slot_key)
         user = {
             "trigger_rules": trigger_rules,
+            "program_events": [e.model_dump() for e in program_events],
             "previous_mind_state": prev_state.model_dump(),
             "user_text": event.user_text,
             "assistant_text": event.assistant_text,
@@ -89,6 +98,18 @@ class MindAnalyzer:
             if work_mode not in ALLOWED_WORK_MODES:
                 work_mode = None
 
+        interaction_mode = data.get("interaction_mode")
+        if interaction_mode is not None:
+            interaction_mode = str(interaction_mode).strip()
+            if interaction_mode not in ALLOWED_INTERACTION_MODES:
+                interaction_mode = None
+
+        persistence = data.get("persistence")
+        if persistence is not None:
+            persistence = str(persistence).strip()
+            if persistence not in ALLOWED_PERSISTENCE:
+                persistence = None
+
         def _opt_float(key: str) -> float | None:
             raw = data.get(key)
             if raw is None:
@@ -97,6 +118,14 @@ class MindAnalyzer:
                 return float(raw)
             except (TypeError, ValueError):
                 return None
+
+        fam = _opt_float("familiarity_delta")
+        if fam is not None:
+            fam = max(0.0, min(0.05, fam))
+
+        warmth = _opt_float("warmth_delta")
+        if warmth is not None:
+            warmth = max(-0.1, min(0.15, warmth))
 
         hints: list[str] = []
         for item in data.get("behavior_hints") or []:
@@ -109,13 +138,52 @@ class MindAnalyzer:
         if vibe_s == "":
             vibe_s = None
 
+        events: list[MindEvent] = []
+        for raw in data.get("events") or []:
+            if not isinstance(raw, dict):
+                continue
+            et = str(raw.get("type") or "").strip()
+            if et not in EVENT_TYPES:
+                continue
+            sig = str(raw.get("significance") or "low").strip()
+            if sig not in ALLOWED_SIGNIFICANCE:
+                sig = "low"
+            aff = str(raw.get("user_affect") or "neutral").strip()
+            if aff not in ALLOWED_AFFECT:
+                aff = "neutral"
+            per = str(raw.get("persistence") or "low").strip()
+            if per not in ALLOWED_PERSISTENCE:
+                per = "low"
+            try:
+                weight = float(raw.get("emotional_weight") or 0.0)
+            except (TypeError, ValueError):
+                weight = 0.0
+            events.append(
+                MindEvent(
+                    type=et,
+                    significance=sig,
+                    user_affect=aff,
+                    persistence=per,
+                    emotional_weight=max(0.0, min(1.0, weight)),
+                    shared_experience=bool(raw.get("shared_experience")),
+                    summary=str(raw.get("summary") or "").strip()[:120],
+                    source="analyzer",
+                )
+            )
+
         return AnalyzerOutput(
             mode="light",
+            events=events,
             mood=mood,
             intensity=_opt_float("intensity"),
-            energy=_opt_float("energy"),
+            cognitive_load=_opt_float("cognitive_load"),
             focus=_opt_float("focus"),
+            persistence=persistence,
+            resolve_prior_emotion=bool(data.get("resolve_prior_emotion")),
+            familiarity_delta=fam,
+            warmth_delta=warmth,
             work_mode=work_mode,
+            interaction_mode=interaction_mode,
             vibe=vibe_s,
             behavior_hints=hints[:4],
             change_summary=str(data.get("change_summary") or "").strip()[:200],

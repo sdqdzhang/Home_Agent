@@ -60,4 +60,7 @@ def pick_analyzer_mode(rules: list[TriggerRule]) -> str:
         return "none"
     if "context_pressure" in rules:
         return "full"
+    # 仅「State 久未更新」不足以单独触发 Analyzer（闲聊会空跑）
+    if rules == ["stale_state"]:
+        return "none"
     return "light"

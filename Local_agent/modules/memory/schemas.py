@@ -16,13 +16,15 @@ class ObserveRequest(BaseModel):
 
 
 class ObserveResponse(BaseModel):
-    memory_id: str
-    content: str
+    memory_id: str = ""
+    content: str = ""
     tags: list[str] = Field(default_factory=list)
-    importance: float
-    kind: MemoryKind
-    working_count: int
-    consolidated: bool
+    importance: float = 0.0
+    kind: MemoryKind = "observation"
+    working_count: int = 0
+    consolidated: bool = False
+    accepted: bool = True
+    rejected_reason: str = ""
 
 
 class IngestDialogueRequest(BaseModel):

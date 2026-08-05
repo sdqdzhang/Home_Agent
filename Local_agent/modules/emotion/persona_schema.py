@@ -26,6 +26,34 @@ class PersonaUI(BaseModel):
     traits: list[str] = Field(default_factory=list)
 
 
+class PersonaEventHints(BaseModel):
+    """人格可选的事件启发词；与 events.py 通用词表合并，不覆盖通用层。"""
+
+    playful: list[str] = Field(default_factory=list)
+    appreciation: list[str] = Field(default_factory=list)
+    task_success: list[str] = Field(default_factory=list)
+    negative: list[str] = Field(default_factory=list)
+    generic_positive: list[str] = Field(default_factory=list)
+
+    def all_affective_tokens(self) -> list[str]:
+        """供规则门控合并：任一命中即可触发 affective_hint。"""
+        out: list[str] = []
+        seen: set[str] = set()
+        for group in (
+            self.playful,
+            self.appreciation,
+            self.task_success,
+            self.negative,
+            self.generic_positive,
+        ):
+            for raw in group:
+                t = str(raw or "").strip()
+                if t and t not in seen:
+                    seen.add(t)
+                    out.append(t)
+        return out
+
+
 class PersonaCore(BaseModel):
     """人格文件解析结果。"""
 
@@ -39,6 +67,7 @@ class PersonaCore(BaseModel):
     style: PersonaStyle = Field(default_factory=PersonaStyle)
     prohibitions: list[str] = Field(default_factory=list)
     ui: PersonaUI = Field(default_factory=PersonaUI)
+    event_hints: PersonaEventHints = Field(default_factory=PersonaEventHints)
     source_path: str = ""
     extra: dict[str, Any] = Field(default_factory=dict)
     # 文件里显式出现的顶层字段（用于 UI 区分「文件未写」与「默认占位」）
@@ -90,10 +119,12 @@ def persona_to_display(persona: PersonaCore) -> dict[str, Any]:
         "style": persona.style.model_dump(),
         "prohibitions": list(persona.prohibitions),
         "ui": persona.ui.model_dump(),
+        "event_hints": persona.event_hints.model_dump(),
         "source_path": persona.source_path or "",
         "configured_fields": configured,
         # 仅 summary+ui 的文件（如 cat.yaml）不要把默认 identity 误当成文件内容
         "structured_from_file": any(
-            k in configured for k in ("identity", "values", "principles", "style", "prohibitions")
+            k in configured
+            for k in ("identity", "values", "principles", "style", "prohibitions", "event_hints")
         ),
     }

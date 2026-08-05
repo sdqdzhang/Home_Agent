@@ -33,6 +33,10 @@ class MemorySettings(BaseSettings):
     relevance_tag_weight: float = 0.35
 
     reflection_min_importance: float = 6.0
+    # observe 低于此分不入库（working / archive 均跳过）
+    observe_min_importance: float = 6.0
+    # 注入主对话时只带不低于此分的条目
+    context_min_importance: float = 6.0
 
 
 memory_settings = MemorySettings()

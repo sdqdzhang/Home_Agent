@@ -52,6 +52,14 @@ ui:
   personality: 可靠谨慎
   traits:
     - 耐心
+
+# 可选：人格专属启发词，与程序通用词表合并（猫系例子见 cat2.yaml）
+# event_hints:
+#   playful: []
+#   appreciation: []
+#   task_success: []
+#   negative: []
+#   generic_positive: []
 ```
 
 也支持同结构的 `.json`。
@@ -67,13 +75,14 @@ ui:
 - 工具路由细则（Tool Policy）
 - 当前情绪 / work_mode / 熟悉度（动态 Mind State）
 - 会话摘要与 Open Tasks（Conversation Manager）
+- **通用**情感启发词（放 `events.py`）；人格只放专属词（`event_hints`）
 
 ## 与动态状态
 
 | 层 | 来源 | 变化频率 |
 |----|------|----------|
 | Persona 文件 | 人编辑 / `set_persona` | 很少 |
-| Emotion / Relationship / work_mode | 程序 + `mind.analyze` | 每轮可能 |
+| Emotion / Relationship / work_mode / interaction_mode | 程序 + `mind.analyze` | 每轮可能 |
 | Mind Context | 模板拼装 | 每轮 |
 
 Personality「缓慢演变」仍不开放；长期偏好走 CM / memory。

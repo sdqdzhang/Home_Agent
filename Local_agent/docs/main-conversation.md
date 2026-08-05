@@ -59,19 +59,24 @@ main FC → planning | executor | rag | env | crawler(扩展)…
 
 ### 4.1 程序态
 
-- 情绪 intensity 衰减；过低回落「平静」  
-- 熟悉度按轮次累计  
-- work_mode 可由 planning/executor 结果推断  
-- 只读 CM 的 topic/project，不双写任务事实  
+- 粗事件检测（工具成败、夸奖、玩闹、任务成功、模式切换等）→ 可选 Analyzer 解释
+- **有效情绪事件优先于自然衰减**；无有效事件时情绪按 `persistence` 回落
+- `current_warmth`：短期亲近感（玩闹/夸奖可升，无事件回落）；与长期 `familiarity` 分开
+- `interaction_mode`：说话姿态（chat/playful/task/supportive/exploratory），与 `work_mode` 正交
+- `cognitive_load` / `focus` 由程序粗估（非 token 直接映射）
+- 熟悉度按**有意义事件**累计（非 `turn_count/40`）
+- work_mode 可由 planning/executor 结果推断，与 mood 独立
+- 只读 CM 的 topic/project，不双写任务事实
 
 ### 4.2 Analyzer（`mind.analyze`）
 
-规则命中（工具完成、长轮、情感启发词、模式切换、过期）后，LLM 建议 mood/intensity/vibe/behavior_hints；强度有最大步长。  
-无事件时不调 LLM，只衰减。
+规则命中后，LLM 解释事件意义（significance / persistence / resolve_prior / warmth_delta / interaction_mode 等）；强度有最大步长，由程序 apply。  
+无有效情绪向事件时不抬强度，只按 persistence 回落。
 
 ### 4.3 人格与开关
 
 - YAML/JSON：`modules/emotion/personas/`，`LA_EMOTION_PERSONA`；见 `PERSONA.md`。
+- Mind Context 含**表达边界**（轻度动作描写可；真实感官体验不可）。
 - **总开关**：默认关闭。关闭时主对话不注入 Mind、不跑状态更新。`LA_EMOTION_ENABLED` 或工作台开关（`data/emotion/enabled.json`）。
 
 ## 5. 主模型默认上下文

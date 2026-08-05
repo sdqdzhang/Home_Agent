@@ -69,6 +69,23 @@ class MemoryService:
         content = request.content.strip()
         tags = await self._resolve_tags(content, kind=request.kind, manual_tags=request.tags)
         importance, assess_reason = await self.assessor.rate(content)
+        min_imp = memory_settings.observe_min_importance
+
+        if importance < min_imp:
+            reason = (
+                f"importance {importance:.1f} < {min_imp:.1f}；{assess_reason}"
+            ).strip("；")
+            logger.info("observe rejected: %s | %s", reason, content[:80])
+            return ObserveResponse(
+                content=content,
+                tags=tags,
+                importance=importance,
+                kind=request.kind,
+                working_count=self.working.count(),
+                consolidated=False,
+                accepted=False,
+                rejected_reason=reason,
+            )
 
         meta = dict(request.metadata)
         meta["assess_reason"] = assess_reason
@@ -110,6 +127,7 @@ class MemoryService:
             kind=request.kind,
             working_count=self.working.count(),
             consolidated=consolidated,
+            accepted=True,
         )
 
     async def ingest_dialogue(self, request: IngestDialogueRequest | dict[str, Any]) -> IngestDialogueResponse:
@@ -128,6 +146,10 @@ class MemoryService:
                 metadata={"source": "dialogue_summary"},
             )
         )
+        if not observed.accepted:
+            raise ValueError(
+                f"对话总结未达入库门槛：{observed.rejected_reason or 'importance too low'}"
+            )
         return IngestDialogueResponse(
             summary=summary,
             memory_id=observed.memory_id,
@@ -148,9 +170,18 @@ class MemoryService:
         items = self.retriever.recall(request.query, top_k=request.top_k, query_tags=query_tags)
         return RecallResponse(query=request.query, items=items)
 
-    def get_context(self) -> dict[str, Any]:
+    def get_context(self, *, min_importance: float | None = None) -> dict[str, Any]:
         """返回供 LLM 使用的工作记忆上下文（默认最多 context_limit 条）。"""
-        rows = self.working.list_for_context(memory_settings.context_limit)
+        floor = (
+            memory_settings.context_min_importance
+            if min_importance is None
+            else float(min_importance)
+        )
+        rows = [
+            item
+            for item in self.working.list_for_context(memory_settings.context_limit * 2)
+            if float(item.get("importance") or 0) >= floor
+        ][: memory_settings.context_limit]
         core = self.core.list_all()
         lines = [
             f"- ({item['kind']}, {item['importance']:.1f}) "
@@ -158,10 +189,64 @@ class MemoryService:
             f"{item['content']}"
             for item in rows
         ]
+        core_lines = [f"- [core:{c['key']}] {c['value']}" for c in core]
+        text_parts = []
+        if core_lines:
+            text_parts.append("长期设定：\n" + "\n".join(core_lines))
+        if lines:
+            text_parts.append("相关记忆：\n" + "\n".join(lines))
         return {
             "working_memories": rows,
             "core_memories": core,
-            "text": "\n".join(lines) if lines else "",
+            "text": "\n\n".join(text_parts),
+        }
+
+    async def context_for_main(self, query: str = "", *, top_k: int = 3) -> dict[str, Any]:
+        """供主对话注入：核心设定 + 高分工作记忆 + 与当前句相关的召回。"""
+        base = self.get_context()
+        recalled: list[dict[str, Any]] = []
+        q = (query or "").strip()
+        if q:
+            try:
+                result = await self.recall(RecallRequest(query=q, top_k=top_k))
+                floor = memory_settings.context_min_importance
+                for item in result.items:
+                    if item.importance < floor:
+                        continue
+                    recalled.append(
+                        {
+                            "memory_id": item.memory_id,
+                            "content": item.content,
+                            "importance": item.importance,
+                            "score": item.score,
+                            "tags": item.tags,
+                        }
+                    )
+            except Exception:
+                logger.exception("context_for_main recall failed")
+
+        # 合并去重：先 core/working 文本，再补召回里尚未出现的
+        seen = {str(r.get("content") or "").strip() for r in base.get("working_memories") or []}
+        extra_lines: list[str] = []
+        for item in recalled:
+            content = str(item.get("content") or "").strip()
+            if not content or content in seen:
+                continue
+            seen.add(content)
+            extra_lines.append(
+                f"- (recall, {float(item.get('importance') or 0):.1f}) {content}"
+            )
+
+        text = str(base.get("text") or "").strip()
+        if extra_lines:
+            block = "可能相关的检索记忆：\n" + "\n".join(extra_lines)
+            text = f"{text}\n\n{block}".strip() if text else block
+
+        return {
+            "working_memories": base.get("working_memories") or [],
+            "core_memories": base.get("core_memories") or [],
+            "recalled": recalled,
+            "text": text,
         }
 
     async def reflect(self, request: ReflectRequest | dict[str, Any] | None = None) -> ReflectResponse:

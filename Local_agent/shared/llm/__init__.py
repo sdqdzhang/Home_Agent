@@ -9,6 +9,7 @@ from shared.llm.errors import (
     InvalidSlotError,
     LLMRegistryError,
 )
+from shared.llm.json_parse import try_parse_pipeline
 from shared.llm.registry import ModelRegistry, get_model_registry, reset_model_registry
 from shared.llm.schemas import BindingRecord, EndpointRecord, ResolvedLLMConfig, SlotDefinition
 from shared.llm.slots import DEFAULT_CHAT_SLOT, SLOT_DEFINITIONS, get_slot, is_valid_slot
@@ -38,6 +39,7 @@ __all__ = [
     "BindingNotFoundError",
     "InvalidSlotError",
     "LlmConfigService",
+    "try_parse_pipeline",
     "MODULE_ID",
     "MODULE_NAME",
     "MODULE_ALIASES",

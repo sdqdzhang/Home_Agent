@@ -20,6 +20,10 @@ class OpenTask(BaseModel):
     title: str = ""
     detail: str = ""
     status: str = "open"
+    origin: str = ""
+    context: str = ""
+    created_turn: int = 0
+    last_updated_turn: int = 0
 
 
 class MemoryCandidate(BaseModel):

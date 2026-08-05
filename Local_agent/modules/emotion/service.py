@@ -1,4 +1,4 @@
-"""心智与状态服务：程序连续性 + 规则触发 Analyzer；向主对话提供 Mind Context。"""
+"""心智与状态服务：粗事件 → Analyzer 解释 → 程序 apply；向主对话提供 Mind Context。"""
 
 from __future__ import annotations
 
@@ -16,14 +16,39 @@ from modules.emotion.config import (
     load_enabled_override,
     save_enabled_override,
 )
-from modules.emotion.context import build_mind_context
-from modules.emotion.continuity import apply_emotion_delta, bump_familiarity, decay_emotion
+from modules.emotion.context import build_display_labels, build_mind_context
+from modules.emotion.continuity import (
+    apply_emotion_delta,
+    apply_familiarity_delta,
+    apply_warmth_delta,
+    bump_turn_stats,
+    default_mood_for_event,
+    familiarity_delta_for_event,
+    infer_cognitive_load,
+    infer_focus,
+    infer_interaction_mode,
+    merge_recent_events,
+    pick_primary_event,
+    tick_emotion,
+    tick_warmth,
+    warmth_delta_for_event,
+    warmth_vibe_label,
+)
+from modules.emotion.events import (
+    detect_program_events,
+    has_effective_emotion_events,
+    should_resolve_prior,
+)
 from modules.emotion.persona_loader import PersonaStore
 from modules.emotion.persona_schema import PersonaCore, persona_to_display
 from modules.emotion.rules import evaluate_triggers, infer_work_mode, pick_analyzer_mode
 from modules.emotion.schemas import (
+    ALLOWED_INTERACTION_MODES,
+    ALLOWED_PERSISTENCE,
     ALLOWED_WORK_MODES,
     AnalyzerMode,
+    AnalyzerOutput,
+    MindEvent,
     MindSnapshot,
     MindState,
     MindTurnEndEvent,
@@ -44,6 +69,37 @@ def _data_dir() -> Path:
         return Path(settings.data_dir)
     except Exception:
         return Path(__file__).resolve().parent.parent.parent / "data"
+
+
+def _merge_events(program: list[MindEvent], analyzed: list[MindEvent]) -> list[MindEvent]:
+    """程序事件打底；Analyzer 同 type 可覆盖语义字段。"""
+    by_type: dict[str, MindEvent] = {e.type: e for e in program}
+    for e in analyzed:
+        if e.type in by_type:
+            base = by_type[e.type]
+            by_type[e.type] = MindEvent(
+                type=e.type,
+                significance=e.significance or base.significance,
+                user_affect=e.user_affect or base.user_affect,
+                persistence=e.persistence or base.persistence,
+                emotional_weight=max(base.emotional_weight, e.emotional_weight),
+                shared_experience=base.shared_experience or e.shared_experience,
+                summary=e.summary or base.summary,
+                source="analyzer",
+            )
+        else:
+            by_type[e.type] = e
+    ordered: list[MindEvent] = []
+    seen: set[str] = set()
+    for e in program:
+        if e.type in by_type and e.type not in seen:
+            ordered.append(by_type[e.type])
+            seen.add(e.type)
+    for e in analyzed:
+        if e.type not in seen:
+            ordered.append(by_type[e.type])
+            seen.add(e.type)
+    return ordered
 
 
 class _SessionRuntime:
@@ -76,7 +132,6 @@ class EmotionService:
         logger.info("emotion module enabled=%s", self._enabled)
 
     def is_enabled(self) -> bool:
-        """主对话是否注入 Mind / 是否在轮末更新状态。"""
         return bool(self._enabled)
 
     def set_enabled(self, enabled: bool) -> dict[str, Any]:
@@ -106,7 +161,7 @@ class EmotionService:
             "spec": self.personas.active_spec,
             "persona": self.persona_display(),
             "available": self.personas.list_available(),
-            "raw_model": p.model_dump(),  # 调试用；UI 应使用 persona 整理视图
+            "raw_model": p.model_dump(),
         }
 
     def list_personas(self) -> list[dict[str, str]]:
@@ -121,11 +176,9 @@ class EmotionService:
         return {"ok": True, "spec": self.personas.active_spec, "persona": persona_to_display(p)}
 
     def get_snapshot(self, session_id: str = "default") -> MindSnapshot:
-        rt = self._session(session_id)
-        return self._build_snapshot(rt)
+        return self._build_snapshot(self._session(session_id))
 
     def context_for_main(self, session_id: str = "default") -> dict[str, Any]:
-        """供 main 组 prompt；关闭时返回空 mind_context（主对话等同未接入）。"""
         if not self.is_enabled():
             return {
                 "enabled": False,
@@ -152,7 +205,148 @@ class EmotionService:
             "mind_state": rt.state.model_dump(),
             "persona_id": persona.id,
             "persona_display_name": persona.display_name,
+            "display": build_display_labels(rt.state),
         }
+
+    def _apply_turn_state(
+        self,
+        rt: _SessionRuntime,
+        event: MindTurnEndEvent,
+        *,
+        before: MindState,
+        previous_topic: str,
+        program_events: list[MindEvent],
+        out: AnalyzerOutput | None,
+    ) -> str:
+        mode_shifted = before.work_mode != rt.state.work_mode
+        merged = _merge_events(program_events, list(out.events) if out else [])
+        merge_recent_events(rt.state, merged)
+
+        load = infer_cognitive_load(
+            event, work_mode=rt.state.work_mode, previous_load=before.emotion.cognitive_load
+        )
+        focus = infer_focus(
+            event,
+            work_mode=rt.state.work_mode,
+            previous_focus=before.emotion.focus,
+            previous_topic=previous_topic,
+            mode_shifted=mode_shifted,
+        )
+        if out and out.cognitive_load is not None:
+            load = out.cognitive_load
+        if out and out.focus is not None:
+            focus = out.focus
+
+        resolve = bool(out.resolve_prior_emotion) if out else should_resolve_prior(
+            merged, before.emotion.mood
+        )
+        # 有效事件优先于自然衰减：有互动/情绪事件则本轮不 tick intensity
+        effective = has_effective_emotion_events(merged)
+
+        mood = out.mood if out else None
+        intensity = out.intensity if out else None
+        persistence = out.persistence if out else None
+        unresolved: str | None = None
+
+        if effective and mood is None:
+            primary = pick_primary_event(merged)
+            if primary is not None:
+                mood, intensity = default_mood_for_event(primary, before.emotion)
+                if persistence is None and primary.persistence in ALLOWED_PERSISTENCE:
+                    persistence = primary.persistence
+                if primary.type == "tool_failure":
+                    unresolved = primary.summary or "工具失败尚未化解"
+
+        if resolve and mood is None:
+            mood = (
+                "愉快"
+                if any(
+                    e.type in ("tool_success", "task_resolved", "task_success")
+                    for e in merged
+                )
+                else "平静"
+            )
+            if intensity is None:
+                intensity = max(0.35, min(0.7, before.emotion.intensity))
+            if persistence is None:
+                persistence = "medium"
+            unresolved = ""
+
+        # 有效事件但未给出强度目标时：显式维持当前强度（不衰减）
+        if effective and intensity is None:
+            intensity = before.emotion.intensity
+
+        if effective or mood is not None or resolve:
+            rt.state.emotion = apply_emotion_delta(
+                before.emotion,
+                mood=mood,
+                intensity=intensity,
+                cognitive_load=load,
+                focus=focus,
+                persistence=persistence,
+                unresolved_affect=unresolved,
+                resolve_prior=resolve,
+            )
+        else:
+            ticked = tick_emotion(before.emotion)
+            rt.state.emotion = apply_emotion_delta(
+                ticked,
+                mood=None,
+                intensity=None,
+                cognitive_load=load,
+                focus=focus,
+            )
+
+        fam_delta = 0.0
+        meaningful = False
+        warmth_delta = 0.0
+        for ev in merged:
+            d = familiarity_delta_for_event(ev)
+            if d > 0:
+                fam_delta += d
+                meaningful = True
+            warmth_delta += warmth_delta_for_event(ev)
+        if out and out.familiarity_delta is not None:
+            fam_delta = max(fam_delta, out.familiarity_delta)
+            if out.familiarity_delta > 0:
+                meaningful = True
+        if out and out.warmth_delta is not None:
+            warmth_delta = out.warmth_delta
+        apply_familiarity_delta(rt.state, fam_delta, meaningful=meaningful)
+
+        if abs(warmth_delta) >= 1e-9:
+            apply_warmth_delta(rt.state, warmth_delta)
+        elif not effective:
+            tick_warmth(rt.state)
+
+        if out:
+            if out.work_mode and out.work_mode in ALLOWED_WORK_MODES:
+                rt.state.work_mode = out.work_mode
+            if out.vibe:
+                rt.state.relationship.vibe = out.vibe
+            if out.behavior_hints:
+                rt.state.behavior_hints = out.behavior_hints
+
+        if out and out.interaction_mode and out.interaction_mode in ALLOWED_INTERACTION_MODES:
+            rt.state.interaction_mode = out.interaction_mode
+        else:
+            rt.state.interaction_mode = infer_interaction_mode(
+                merged,
+                work_mode=rt.state.work_mode,
+                previous=before.interaction_mode,
+                user_text=event.user_text or "",
+            )
+
+        if not (out and out.vibe):
+            # Analyzer 未指定氛围时，用短期亲近感给出可读 vibe
+            rt.state.relationship.vibe = warmth_vibe_label(rt.state.relationship.current_warmth)
+
+        rt.state.extra = {
+            **(rt.state.extra or {}),
+            "topic": event.conversation_topic or "",
+            "project": event.conversation_project or "",
+        }
+        return (out.change_summary if out else "") or ""
 
     async def on_turn_end(self, event: MindTurnEndEvent | dict[str, Any]) -> MindSnapshot:
         if isinstance(event, dict):
@@ -160,7 +354,6 @@ class EmotionService:
 
         rt = self._session(event.session_id)
         if not self.is_enabled():
-            # 关闭时不更新状态、不推 UI，保持与接入前一致
             return self._build_snapshot(rt)
 
         rt.turn_index = event.turn_index or (rt.turn_index + 1)
@@ -172,58 +365,59 @@ class EmotionService:
             topic, project = self._read_conversation_focus(event.session_id)
         event.conversation_topic = topic
         event.conversation_project = project
-        rt.last_topic = topic
-        rt.last_project = project
 
+        previous_topic = rt.last_topic
         before = rt.state.model_copy(deep=True)
-        bump_familiarity(rt.state)
+        bump_turn_stats(rt.state)
 
         program_mode = infer_work_mode(event, rt.state.work_mode)
         if program_mode != rt.state.work_mode:
             rt.state.work_mode = program_mode
+
+        program_events = detect_program_events(
+            event,
+            previous_work_mode=before.work_mode,
+            program_work_mode=rt.state.work_mode,
+            previous_topic=previous_topic,
+            event_hints=self._persona().event_hints,
+        )
 
         rules = evaluate_triggers(
             event,
             turns_since_analyze=rt.turns_since_analyze,
             previous_work_mode=before.work_mode,
             program_work_mode=rt.state.work_mode,
+            extra_affective_hints=self._persona().event_hints.all_affective_tokens(),
         )
         mode = pick_analyzer_mode(rules)
         rt.last_trigger_rules = list(rules)
 
         analyzed = False
-        change_summary = ""
+        out: AnalyzerOutput | None = None
         if mode != "none":
             out = await self.analyzer.run(
                 prev_state=before,
                 event=event,
                 trigger_rules=list(rules),
+                program_events=program_events,
             )
             rt.last_analyzer_mode = out.mode
             analyzed = True
             rt.turns_since_analyze = 0
-
-            if out.mood is not None or out.intensity is not None or out.energy is not None or out.focus is not None:
-                rt.state.emotion = apply_emotion_delta(
-                    rt.state.emotion,
-                    mood=out.mood,
-                    intensity=out.intensity,
-                    energy=out.energy,
-                    focus=out.focus,
-                )
-            else:
-                rt.state.emotion = decay_emotion(rt.state.emotion)
-
-            if out.work_mode and out.work_mode in ALLOWED_WORK_MODES:
-                rt.state.work_mode = out.work_mode
-            if out.vibe:
-                rt.state.relationship.vibe = out.vibe
-            if out.behavior_hints:
-                rt.state.behavior_hints = out.behavior_hints
-            change_summary = out.change_summary
         else:
             rt.last_analyzer_mode = "none"
-            rt.state.emotion = decay_emotion(rt.state.emotion)
+
+        change_summary = self._apply_turn_state(
+            rt,
+            event,
+            before=before,
+            previous_topic=previous_topic,
+            program_events=program_events,
+            out=out,
+        )
+
+        rt.last_topic = topic
+        rt.last_project = project
 
         sc = self._diff_change(
             before,
@@ -231,6 +425,7 @@ class EmotionService:
             turn_index=rt.turn_index,
             reason=change_summary,
             source="analyzer" if analyzed and change_summary else "program",
+            events=[e.type for e in rt.state.recent_events[-4:]],
         )
         if sc:
             rt.recent_changes = (rt.recent_changes + [sc])[-STATE_CHANGE_TAIL:]
@@ -268,15 +463,32 @@ class EmotionService:
         turn_index: int,
         reason: str,
         source: str,
+        events: list[str] | None = None,
     ) -> StateChange | None:
         emo_changed = (
             before.emotion.mood != after.emotion.mood
             or abs(before.emotion.intensity - after.emotion.intensity) >= 0.04
+            or abs(before.emotion.cognitive_load - after.emotion.cognitive_load) >= 0.08
+            or abs(before.emotion.focus - after.emotion.focus) >= 0.08
         )
         mode_changed = before.work_mode != after.work_mode
+        inter_changed = before.interaction_mode != after.interaction_mode
         vibe_changed = before.relationship.vibe != after.relationship.vibe
         hints_changed = before.behavior_hints != after.behavior_hints
-        if not (emo_changed or mode_changed or vibe_changed or hints_changed or reason):
+        fam_changed = abs(before.relationship.familiarity - after.relationship.familiarity) >= 0.02
+        warmth_changed = abs(
+            before.relationship.current_warmth - after.relationship.current_warmth
+        ) >= 0.04
+        if not (
+            emo_changed
+            or mode_changed
+            or inter_changed
+            or vibe_changed
+            or hints_changed
+            or fam_changed
+            or warmth_changed
+            or reason
+        ):
             return None
 
         summary = reason
@@ -289,8 +501,22 @@ class EmotionService:
                 )
             if mode_changed:
                 bits.append(f"工作模式 {before.work_mode} → {after.work_mode}")
+            if inter_changed:
+                bits.append(
+                    f"互动模式 {before.interaction_mode} → {after.interaction_mode}"
+                )
             if vibe_changed:
                 bits.append(f"氛围 → {after.relationship.vibe}")
+            if fam_changed:
+                bits.append(
+                    f"熟悉度 {before.relationship.familiarity:.2f} → "
+                    f"{after.relationship.familiarity:.2f}"
+                )
+            if warmth_changed:
+                bits.append(
+                    f"亲近感 {before.relationship.current_warmth:.2f} → "
+                    f"{after.relationship.current_warmth:.2f}"
+                )
             summary = "；".join(bits) or "状态微调"
 
         return StateChange(
@@ -302,8 +528,11 @@ class EmotionService:
             to_intensity=after.emotion.intensity,
             from_work_mode=before.work_mode,
             to_work_mode=after.work_mode,
+            from_interaction_mode=before.interaction_mode,
+            to_interaction_mode=after.interaction_mode,
             reason=reason or summary,
             source=source,
+            events=list(events or []),
         )
 
     def _build_snapshot(self, rt: _SessionRuntime) -> MindSnapshot:
@@ -326,6 +555,7 @@ class EmotionService:
             persona_id=persona.id,
             persona_display_name=persona.display_name,
             persona_spec=self.personas.active_spec,
+            display=build_display_labels(rt.state),
         )
 
     def _mind_snapshot_payload(
@@ -370,6 +600,7 @@ class EmotionService:
             return
         emo = rt.state.emotion
         persona = self._persona()
+        labels = build_display_labels(rt.state)
         text = (change.summary if change else "") or f"当前情绪：{emo.mood}"
         traits = list(persona.ui.traits) if persona.ui.traits else []
         if rt.state.behavior_hints:
@@ -385,9 +616,12 @@ class EmotionService:
                     "text": text,
                     "traits": traits[:6],
                     "intensity": emo.intensity,
-                    "energy": emo.energy,
+                    "cognitive_load": emo.cognitive_load,
                     "focus": emo.focus,
                     "work_mode": rt.state.work_mode,
+                    "interaction_mode": rt.state.interaction_mode,
+                    "current_warmth": rt.state.relationship.current_warmth,
+                    "display": labels,
                     "persona_id": persona.id,
                     "persona_display_name": persona.display_name,
                 },
@@ -397,7 +631,6 @@ class EmotionService:
             logger.exception("push persona_state failed")
 
     async def handle_incoming_message(self, data: dict[str, Any]) -> None:
-        """UI：refresh / list_personas / set_persona / reload_persona / get_persona。"""
         if data.get("name") != "user_ui":
             return
         target = data.get("target", "")
@@ -446,7 +679,6 @@ class EmotionService:
                 await self._push_persona_state(rt, None)
             return
 
-        # refresh / get_snapshot / get_persona / list_personas
         if action in (
             "refresh",
             "get_snapshot",

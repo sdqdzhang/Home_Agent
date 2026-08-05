@@ -11,6 +11,13 @@ logger = logging.getLogger(__name__)
 _FUTURE_MARKERS = ("以后", "今后", "下次", "默认", "统一", "沿用", "长期", "偏好", "不再", "总是")
 _RULE_MARKERS = ("要求", "选定", "确认", "规定", "必须", "规则")
 
+# 瞬时监控 / 单次采样：有长期语义才可高分，否则封顶
+_EPHEMERAL_RE = re.compile(
+    r"(cpu\s*占用|内存\s*占用|采样到|间歇性高负载|进程.{0,12}(占用|波动|负载)"
+    r"|占用波动|%\s*(（|\()|约\s*\d+\s*核)",
+    re.IGNORECASE,
+)
+
 
 def preference_score_floor(content: str) -> float | None:
     """对明显的长期偏好/规则记忆设最低分，避免小模型系统性低估。"""
@@ -24,6 +31,16 @@ def preference_score_floor(content: str) -> float | None:
     if has_future and re.search(r"(选定|采用|使用).{0,20}(方案|框架|技术|栈|工具)", text):
         return 7.0
     return None
+
+
+def ephemeral_score_ceiling(content: str) -> float | None:
+    """一次性监控指标等：无长期语义时最高 4 分。"""
+    text = content.strip()
+    if not text or not _EPHEMERAL_RE.search(text):
+        return None
+    if any(m in text for m in _FUTURE_MARKERS) and any(m in text for m in _RULE_MARKERS):
+        return None
+    return 4.0
 
 
 class ImportanceAssessor:
@@ -50,8 +67,17 @@ class ImportanceAssessor:
                 reason = f"{reason}；检测到长期偏好/规则，不低于 {floor:.0f} 分".strip("；")
                 rating = floor
 
+            ceiling = ephemeral_score_ceiling(content)
+            if ceiling is not None and rating > ceiling:
+                reason = f"{reason}；一次性监控/采样类，封顶 {ceiling:.0f} 分".strip("；")
+                rating = ceiling
+
             return rating, reason
         except Exception:
             logger.exception("Memory importance assess failed")
             floor = preference_score_floor(content)
-            return floor or 5.0, "模型打分失败，使用规则兜底或默认 5 分"
+            ceiling = ephemeral_score_ceiling(content)
+            rating = float(floor or 5.0)
+            if ceiling is not None:
+                rating = min(rating, ceiling)
+            return rating, "模型打分失败，使用规则兜底或默认 5 分"

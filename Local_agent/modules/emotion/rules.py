@@ -5,7 +5,7 @@ from __future__ import annotations
 from modules.emotion import LONG_TURN_TOKENS, STALE_MIND_TURNS
 from modules.emotion.schemas import MindTurnEndEvent, TriggerRule
 
-# 轻量情感启发（仅作 LLM 门控，不直接改情绪）
+# 轻量情感启发（仅作 LLM 门控，不直接改情绪；人格专属词经 extra_affective_hints 合并）
 _AFFECTIVE_HINTS = (
     "谢谢",
     "感谢",
@@ -31,6 +31,16 @@ _AFFECTIVE_HINTS = (
     "糟糕",
     "喜欢",
     "讨厌",
+    # 通用玩闹
+    "摸摸",
+    "揉揉",
+    "戳戳",
+    "拍拍",
+    "摸头",
+    "蹭蹭",
+    "抱抱",
+    "逗逗",
+    "陪我玩",
 )
 
 
@@ -40,6 +50,7 @@ def evaluate_triggers(
     turns_since_analyze: int,
     previous_work_mode: str,
     program_work_mode: str,
+    extra_affective_hints: list[str] | tuple[str, ...] | None = None,
 ) -> list[TriggerRule]:
     hit: list[TriggerRule] = []
 
@@ -53,7 +64,14 @@ def evaluate_triggers(
         hit.append("stale_mind")
 
     text = (event.user_text or "") + "\n" + (event.assistant_text or "")
-    if any(k in text for k in _AFFECTIVE_HINTS):
+    hints = _AFFECTIVE_HINTS
+    if extra_affective_hints:
+        hints = tuple(
+            dict.fromkeys(
+                list(_AFFECTIVE_HINTS) + [str(x).strip() for x in extra_affective_hints if str(x).strip()]
+            )
+        )
+    if any(k in text for k in hints):
         hit.append("affective_hint")
 
     if program_work_mode != previous_work_mode:

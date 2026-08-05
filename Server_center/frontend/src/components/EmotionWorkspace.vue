@@ -41,6 +41,18 @@ const summaryLines = computed(() => personaSummaryLines(persona.value))
 
 const emotion = computed(() => mindState.value?.emotion || null)
 const relationship = computed(() => mindState.value?.relationship || null)
+const display = computed(() => snapshot.value?.display || {})
+const showDebugNumbers = ref(false)
+const recentEvents = computed(() =>
+  Array.isArray(mindState.value?.recent_events) ? mindState.value.recent_events : [],
+)
+
+function loadValue(emo) {
+  if (!emo) return 0
+  if (typeof emo.cognitive_load === 'number') return emo.cognitive_load
+  if (typeof emo.energy === 'number') return emo.energy
+  return 0
+}
 
 watch(
   available,
@@ -355,16 +367,98 @@ onMounted(() => {
         <h2 class="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">当前动态状态</h2>
         <div v-if="emotion" class="mb-3 flex flex-wrap items-center gap-2">
           <span class="text-lg text-zinc-100">{{ emotion.mood }}</span>
-          <span class="rounded bg-zinc-800 px-2 py-0.5 font-mono text-[11px] text-zinc-400">
-            {{ mindState?.work_mode || '—' }}
+          <span class="rounded bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-300">
+            {{ display.interaction_mode || mindState?.interaction_mode || '—' }}
           </span>
+          <span class="rounded bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-400">
+            {{ display.collaboration || display.work_mode || mindState?.work_mode || '—' }}
+          </span>
+          <span
+            v-if="emotion.persistence && emotion.persistence !== 'none'"
+            class="rounded bg-zinc-800/80 px-2 py-0.5 text-[11px] text-zinc-500"
+          >惯性 {{ emotion.persistence }}</span>
         </div>
-        <div v-if="emotion" class="space-y-2">
-          <div v-for="row in [
-            { label: '情绪强度', value: emotion.intensity },
-            { label: '精力', value: emotion.energy },
-            { label: '专注', value: emotion.focus },
-          ]" :key="row.label">
+
+        <dl class="grid grid-cols-2 gap-3 text-xs md:grid-cols-4">
+          <div>
+            <dt class="text-zinc-500">情绪强度</dt>
+            <dd>{{ display.intensity || '—' }}</dd>
+          </div>
+          <div>
+            <dt class="text-zinc-500">认知负荷</dt>
+            <dd>{{ display.cognitive_load || '—' }}</dd>
+          </div>
+          <div>
+            <dt class="text-zinc-500">专注</dt>
+            <dd>{{ display.focus || '—' }}</dd>
+          </div>
+          <div>
+            <dt class="text-zinc-500">关系</dt>
+            <dd>{{ display.familiarity || '—' }}</dd>
+          </div>
+          <div>
+            <dt class="text-zinc-500">当前亲近</dt>
+            <dd>{{ display.warmth || '—' }}</dd>
+          </div>
+          <div>
+            <dt class="text-zinc-500">互动模式</dt>
+            <dd>{{ display.interaction_mode || mindState?.interaction_mode || '—' }}</dd>
+          </div>
+        </dl>
+
+        <dl v-if="relationship" class="mt-3 grid grid-cols-2 gap-2 text-xs md:grid-cols-3">
+          <div>
+            <dt class="text-zinc-500">氛围</dt>
+            <dd>{{ relationship.vibe || display.vibe || '—' }}</dd>
+          </div>
+          <div>
+            <dt class="text-zinc-500">有意义互动</dt>
+            <dd class="font-mono">{{ relationship.meaningful_turns ?? 0 }}</dd>
+          </div>
+          <div>
+            <dt class="text-zinc-500">总轮次（统计）</dt>
+            <dd class="font-mono">{{ relationship.turn_count ?? '—' }}</dd>
+          </div>
+        </dl>
+
+        <p v-if="emotion?.unresolved_affect" class="mt-3 text-xs text-amber-200/80">
+          未化解线索：{{ emotion.unresolved_affect }}
+        </p>
+
+        <div v-if="(mindState?.behavior_hints || []).length" class="mt-3">
+          <p class="mb-1 text-[11px] text-zinc-500">当前行为倾向</p>
+          <ul class="list-inside list-disc space-y-0.5 text-xs text-zinc-300">
+            <li v-for="(h, i) in mindState.behavior_hints" :key="i">{{ h }}</li>
+          </ul>
+        </div>
+
+        <div v-if="recentEvents.length" class="mt-3">
+          <p class="mb-1 text-[11px] text-zinc-500">近期事件</p>
+          <ul class="max-h-28 space-y-0.5 overflow-auto font-mono text-[11px] text-zinc-500">
+            <li v-for="(ev, i) in recentEvents.slice().reverse()" :key="i">
+              {{ ev.type }} · {{ ev.significance }} · {{ preview(ev.summary, 60) }}
+            </li>
+          </ul>
+        </div>
+
+        <button
+          type="button"
+          class="mt-3 text-[11px] text-zinc-500 hover:text-zinc-400"
+          @click="showDebugNumbers = !showDebugNumbers"
+        >
+          {{ showDebugNumbers ? '收起' : '展开' }}内部数值（调试）
+        </button>
+        <div v-if="showDebugNumbers && emotion" class="mt-2 space-y-2">
+          <div
+            v-for="row in [
+              { label: 'intensity', value: emotion.intensity },
+              { label: 'cognitive_load', value: loadValue(emotion) },
+              { label: 'focus', value: emotion.focus },
+              { label: 'familiarity', value: relationship?.familiarity },
+              { label: 'current_warmth', value: relationship?.current_warmth },
+            ]"
+            :key="row.label"
+          >
             <div class="mb-0.5 flex justify-between text-[11px] text-zinc-500">
               <span>{{ row.label }}</span>
               <span class="font-mono">{{ pct(row.value) }}%</span>
@@ -373,26 +467,6 @@ onMounted(() => {
               <div class="h-full rounded bg-teal-600/80" :style="{ width: `${pct(row.value)}%` }" />
             </div>
           </div>
-        </div>
-        <dl v-if="relationship" class="mt-3 grid grid-cols-2 gap-2 text-xs md:grid-cols-3">
-          <div>
-            <dt class="text-zinc-500">熟悉度</dt>
-            <dd class="font-mono">{{ pct(relationship.familiarity) }}%</dd>
-          </div>
-          <div>
-            <dt class="text-zinc-500">互动轮次</dt>
-            <dd class="font-mono">{{ relationship.turn_count ?? '—' }}</dd>
-          </div>
-          <div class="col-span-2 md:col-span-1">
-            <dt class="text-zinc-500">氛围</dt>
-            <dd>{{ relationship.vibe || '—' }}</dd>
-          </div>
-        </dl>
-        <div v-if="(mindState?.behavior_hints || []).length" class="mt-3">
-          <p class="mb-1 text-[11px] text-zinc-500">当前行为倾向</p>
-          <ul class="list-inside list-disc space-y-0.5 text-xs text-zinc-300">
-            <li v-for="(h, i) in mindState.behavior_hints" :key="i">{{ h }}</li>
-          </ul>
         </div>
       </section>
 

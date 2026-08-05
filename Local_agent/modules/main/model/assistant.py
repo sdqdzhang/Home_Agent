@@ -55,6 +55,7 @@ class MainAssistant:
         history: list[dict[str, str]],
         manager_ctx: dict[str, Any] | None,
         mind_ctx: dict[str, Any] | None = None,
+        memory_ctx: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         parts = [SYSTEM_PROMPT]
         mind_text = ""
@@ -62,16 +63,37 @@ class MainAssistant:
             mind_text = str(mind_ctx.get("mind_context") or "").strip()
         if mind_text:
             parts.append("\n\n" + mind_text)
+
         if manager_ctx:
             state = manager_ctx.get("conversation_state") or {}
             summary = manager_ctx.get("conversation_summary") or ""
             open_tasks = manager_ctx.get("open_tasks") or []
             parts.append(
-                "\n\n## 会话状态（由 Conversation Manager 注入）\n"
-                f"State: {json.dumps(state, ensure_ascii=False)}\n"
-                f"Summary: {summary or '（无）'}\n"
-                f"Open Tasks: {json.dumps(open_tasks, ensure_ascii=False)}"
+                "\n\n## 会话状态（Conversation State — 当前结构化事实）\n"
+                f"{json.dumps(state, ensure_ascii=False)}"
             )
+            parts.append(
+                "\n\n## 会话摘要（Summary — 更早对话的滚动压缩，不是 State）\n"
+                f"{summary or '（无）'}"
+            )
+            parts.append(
+                "\n\n## Open Tasks（仅供参考；是否继续由你根据用户当前话决定，不要自动开跑）\n"
+                f"{json.dumps(open_tasks, ensure_ascii=False)}"
+            )
+
+        memory_text = ""
+        if memory_ctx:
+            memory_text = str(memory_ctx.get("text") or "").strip()
+        if memory_text:
+            parts.append(
+                "\n\n## 长期记忆（可选参考）\n"
+                "以下是系统检索到的用户相关记忆。规则：\n"
+                "- 与当前问题相关才使用；\n"
+                "- 无关则忽略，不要主动提起，也不要硬往记忆话题上靠；\n"
+                "- 不要把记忆当成必须完成的任务列表。\n\n"
+                f"{memory_text}"
+            )
+
         messages: list[dict[str, Any]] = [{"role": "system", "content": "\n".join(parts)}]
         for turn in history[-RECENT_TURNS:]:
             role = turn.get("role") or "user"
@@ -99,8 +121,12 @@ class MainAssistant:
             )
         msg = await llm.chat_completion(messages, tools=None, tool_choice=None)
         usage = msg.pop("_usage", None) or {}
-        for k in usage_totals:
-            usage_totals[k] += int(usage.get(k) or 0)
+        for k in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            if k in usage_totals:
+                usage_totals[k] += int(usage.get(k) or 0)
+        prompt_n = int(usage.get("prompt_tokens") or 0)
+        if prompt_n > int(usage_totals.get("max_prompt_tokens") or 0):
+            usage_totals["max_prompt_tokens"] = prompt_n
         # 即便模型仍返回 tool_calls，也忽略，只取文本
         text = str(msg.get("content") or "").strip()
         messages.append({"role": "assistant", "content": text})
@@ -124,7 +150,12 @@ class MainAssistant:
         llm = get_llm_client(self.slot_key)
         tools = tools_for_openai(available_modules=available_modules)
         tool_trace: list[dict[str, Any]] = []
-        usage_totals = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        usage_totals = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "max_prompt_tokens": 0,
+        }
         final_text = ""
 
         for _ in range(max_rounds):
@@ -134,8 +165,11 @@ class MainAssistant:
                 tool_choice="auto" if tools else None,
             )
             usage = msg.pop("_usage", None) or {}
-            for k in usage_totals:
+            for k in ("prompt_tokens", "completion_tokens", "total_tokens"):
                 usage_totals[k] += int(usage.get(k) or 0)
+            prompt_n = int(usage.get("prompt_tokens") or 0)
+            if prompt_n > usage_totals["max_prompt_tokens"]:
+                usage_totals["max_prompt_tokens"] = prompt_n
 
             tool_calls = msg.get("tool_calls") or []
             content = str(msg.get("content") or "").strip()

@@ -26,7 +26,10 @@ ctx = await call("emotion", "context_for_main", "default")
 ```
 轮前: emotion.context_for_main + cm.context_for_main
 轮后: cm.on_turn_end → emotion.on_turn_end
+         → detect_program_events →（规则命中则）mind.analyze → 程序 apply
 ```
+
+Mind Context 使用文案化标签（熟悉度/认知负荷/专注），不直接注入裸 float。
 
 ## UI → emotion
 
