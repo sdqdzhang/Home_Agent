@@ -172,6 +172,8 @@ function connectAll() {
       onOpen: () => {
         openChannels.add(channel)
         wsConnected.value = true
+        // 重连后补拉，避免漏掉爬取结果等 WS 推送
+        refreshMessagesQuiet()
       },
       onClose: () => handleClose(channel),
       onMessage: handleWsMessage,
@@ -278,7 +280,7 @@ watch(selectedAgentId, (id) => {
     clearInterval(pollTimer)
     pollTimer = null
   }
-  if (id === 'env' || id === 'executor') {
+  if (id === 'env' || id === 'executor' || id === 'crawler') {
     pollTimer = setInterval(refreshMessagesQuiet, 8000)
   }
 })
@@ -422,6 +424,7 @@ onUnmounted(() => {
         :loading="loading"
         :agent="selectedAgent"
         @error="onWorkspaceError"
+        @message="upsertMessage"
       />
 
       <LlmConfigWorkspace

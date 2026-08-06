@@ -104,7 +104,11 @@ class CrawlerTestApp(tk.Tk):
             from modules.crawler.storage import JobStore
 
             crawler_settings.data_dir.mkdir(parents=True, exist_ok=True)
-            store = JobStore(crawler_settings.db_path, crawler_settings.artifacts_dir)
+            store = JobStore(
+                crawler_settings.db_path,
+                crawler_settings.artifacts_dir,
+                crawler_settings.texts_dir,
+            )
             orch = CrawlOrchestrator(store, CrawlerAssistant())
             config = {"verify_ssl": not ignore_ssl}
             return await orch.run(

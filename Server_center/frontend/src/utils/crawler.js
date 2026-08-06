@@ -89,8 +89,9 @@ export function waitForCrawlResult(getMessages, requestId, timeoutMs = 300000) {
  * @param {() => import('./messages.js').UiMessage[]} getMessages
  * @param {string} targetAgentId
  * @param {{ url: string, task?: string, config?: object, use_model?: boolean }} opts
+ * @param {{ onSent?: (msg: import('./messages.js').UiMessage) => void }} [hooks]
  */
-export async function requestCrawl(getMessages, targetAgentId, opts) {
+export async function requestCrawl(getMessages, targetAgentId, opts, hooks = {}) {
   const requestId = crypto.randomUUID()
   const msg = buildCrawlMessage(targetAgentId, {
     url: opts.url,
@@ -100,7 +101,10 @@ export async function requestCrawl(getMessages, targetAgentId, opts) {
     request_id: requestId,
   })
   const pending = waitForCrawlResult(getMessages, requestId)
-  await sendMessageLocal(msg)
+  const result = await sendMessageLocal(msg)
+  if (result?.message) {
+    hooks.onSent?.(result.message)
+  }
   return pending
 }
 

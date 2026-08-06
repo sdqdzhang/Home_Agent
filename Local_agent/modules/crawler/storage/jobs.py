@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,13 +12,36 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def slugify_title(title: str, *, max_len: int = 80) -> str:
+    """生成可读文件名（保留中英文），去掉路径非法字符。"""
+    s = (title or "").strip()
+    s = re.sub(r'[\\/:*?"<>|\r\n\t]+', " ", s)
+    s = re.sub(r"\s+", "-", s.strip())
+    s = re.sub(r"-{2,}", "-", s).strip("-._ ")
+    if not s:
+        return "untitled"
+    if len(s) > max_len:
+        s = s[:max_len].rstrip("-._ ")
+    return s or "untitled"
+
+
+def format_text_markdown(title: str, content: str) -> str:
+    heading = (title or "").strip() or "untitled"
+    body = (content or "").strip()
+    if not body:
+        return f"# {heading}\n"
+    return f"# {heading}\n\n{body}\n"
+
+
 class JobStore:
     """爬取任务记录与产物索引。"""
 
-    def __init__(self, db_path: Path, artifacts_dir: Path) -> None:
+    def __init__(self, db_path: Path, artifacts_dir: Path, texts_dir: Path | None = None) -> None:
         self.db_path = db_path
         self.artifacts_dir = artifacts_dir
+        self.texts_dir = texts_dir if texts_dir is not None else artifacts_dir.parent / "texts"
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
+        self.texts_dir.mkdir(parents=True, exist_ok=True)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
@@ -124,3 +148,29 @@ class JobStore:
         if not self.artifacts_dir.exists():
             return []
         return sorted(p.name for p in self.artifacts_dir.iterdir() if p.is_file())
+
+    def unique_text_path(self, title: str) -> Path:
+        """按标题生成 texts 目录下不冲突的 .md 路径。"""
+        self.texts_dir.mkdir(parents=True, exist_ok=True)
+        base = slugify_title(title)
+        candidate = self.texts_dir / f"{base}.md"
+        if not candidate.exists():
+            return candidate
+        for i in range(2, 1000):
+            candidate = self.texts_dir / f"{base}-{i}.md"
+            if not candidate.exists():
+                return candidate
+        # 极端情况：落到时间戳后缀
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        return self.texts_dir / f"{base}-{stamp}.md"
+
+    def save_text_export(self, title: str, content: str) -> Path:
+        """保存仅含标题+正文的 Markdown，供阅读 / RAG / 记忆上传。"""
+        path = self.unique_text_path(title)
+        path.write_text(format_text_markdown(title, content), encoding="utf-8")
+        return path
+
+    def list_text_exports(self) -> list[str]:
+        if not self.texts_dir.exists():
+            return []
+        return sorted(p.name for p in self.texts_dir.glob("*.md") if p.is_file())

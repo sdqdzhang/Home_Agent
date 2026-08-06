@@ -17,7 +17,7 @@ const props = defineProps({
   agent: { type: Object, required: true },
 })
 
-const emit = defineEmits(['error'])
+const emit = defineEmits(['error', 'message'])
 
 const url = ref('https://example.com')
 const task = ref('抓取并提取页面有效正文')
@@ -103,12 +103,19 @@ async function onCrawl() {
   pendingCount.value += 1
 
   try {
-    const body = await requestCrawl(() => props.messages, props.agent.id, {
-      url: target,
-      task: task.value.trim(),
-      use_model: useModel.value,
-      config: { verify_ssl: verifySsl.value },
-    })
+    const body = await requestCrawl(
+      () => props.messages,
+      props.agent.id,
+      {
+        url: target,
+        task: task.value.trim(),
+        use_model: useModel.value,
+        config: { verify_ssl: verifySsl.value },
+      },
+      {
+        onSent: (m) => emit('message', m),
+      },
+    )
     if (followLatest.value) {
       lastResult.value = body
       if (!body?.success) {

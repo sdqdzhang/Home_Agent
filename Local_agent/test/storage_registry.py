@@ -59,6 +59,7 @@ def _load_groups() -> list[StorageGroup]:
         StorageGroup("爬取", "任务数据库", crawler_settings.db_path, "sqlite", "爬取任务与会话记忆"),
         StorageGroup("爬取", "任务日志", crawler_settings.logs_dir, "log_dir", "每任务 *.log"),
         StorageGroup("爬取", "爬取产物", crawler_settings.artifacts_dir, "artifact_dir", "每任务 *.json"),
+        StorageGroup("爬取", "正文导出", crawler_settings.texts_dir, "dir", "标题+正文 *.md（供阅读/RAG）"),
         StorageGroup("执行", "任务数据库", executor_settings.db_path, "sqlite", "执行任务记录"),
         StorageGroup("执行", "任务日志", executor_settings.logs_dir, "log_dir", "每任务 *.log"),
         StorageGroup("RAG", "元数据数据库", rag_settings.db_path, "sqlite", "文档/分块/会话"),

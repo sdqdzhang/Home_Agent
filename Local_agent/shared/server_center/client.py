@@ -174,18 +174,24 @@ class ServerCenterClient:
             return str(response["id"])
         return fallback
 
-    async def fetch_encrypted_messages(
+    async def fetch_messages(
         self,
         *,
+        target: str | None = None,
+        name: str | None = None,
         status: str | None = None,
         msg_type: str | None = None,
         limit: int = 50,
     ) -> list[dict[str, Any]]:
+        """拉取消息列表（可按 target/name 过滤）。默认用本客户端公钥加密返回。"""
         params: dict[str, Any] = {
-            "name": self.module_name,
             "encrypted_for": self.wire_client_id,
             "limit": limit,
         }
+        if target:
+            params["target"] = target
+        if name:
+            params["name"] = name
         if status:
             params["status"] = status
         if msg_type:
@@ -205,6 +211,41 @@ class ServerCenterClient:
             if self.wire_encrypt:
                 raise ValueError("Server returned plaintext message list while wire encrypt is on")
             return body.get("messages", [])
+
+    async def fetch_encrypted_messages(
+        self,
+        *,
+        status: str | None = None,
+        msg_type: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """兼容旧接口：按本模块 name 过滤（多为出站消息）。"""
+        return await self.fetch_messages(
+            name=self.module_name,
+            status=status,
+            msg_type=msg_type,
+            limit=limit,
+        )
+
+    async def get_message(self, message_id: str) -> dict[str, Any] | None:
+        params = {"encrypted_for": self.wire_client_id}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{self.base_url}/api/v1/messages/{message_id}",
+                params=params,
+                headers=self._client_headers(),
+            )
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            body = resp.json()
+            if is_encrypted_payload(body):
+                plain = decrypt_payload_b64(body, self.private_key)
+                data = json.loads(plain.decode("utf-8"))
+                return data if isinstance(data, dict) else None
+            if self.wire_encrypt:
+                raise ValueError("Server returned plaintext message while wire encrypt is on")
+            return body if isinstance(body, dict) else None
 
     async def respond(
         self,
