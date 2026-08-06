@@ -1,9 +1,12 @@
 import base64
+import os
 from pathlib import Path
+from typing import Any
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPublicKey
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 OAEP_PADDING = padding.OAEP(
     mgf=padding.MGF1(algorithm=hashes.SHA256()),
@@ -12,6 +15,7 @@ OAEP_PADDING = padding.OAEP(
 )
 
 RSA_OAEP_CHUNK_SIZE = 190
+HYBRID_ALG = "RSA-OAEP+AES-256-GCM"
 
 
 def generate_keypair(key_size: int = 2048) -> tuple[RSAPrivateKey, RSAPublicKey]:
@@ -70,7 +74,32 @@ def decrypt_from_b64(data_b64: str, private_key: RSAPrivateKey) -> bytes:
     return private_key.decrypt(base64.b64decode(data_b64), OAEP_PADDING)
 
 
-def encrypt_payload_b64(data: bytes, public_key: RSAPublicKey) -> dict[str, str | list[str]]:
+def is_encrypted_payload(payload: dict[str, Any] | None) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("encrypted") or payload.get("encrypted_chunks"):
+        return True
+    if payload.get("ek") and payload.get("ct") and payload.get("iv"):
+        return True
+    return False
+
+
+def encrypt_payload_b64(data: bytes, public_key: RSAPublicKey) -> dict[str, str | int]:
+    """Hybrid RSA-OAEP + AES-256-GCM (preferred for all sizes)."""
+    aes_key = os.urandom(32)
+    iv = os.urandom(12)
+    ct = AESGCM(aes_key).encrypt(iv, data, None)
+    return {
+        "v": 1,
+        "alg": HYBRID_ALG,
+        "ek": encrypt_to_b64(aes_key, public_key),
+        "iv": base64.b64encode(iv).decode(),
+        "ct": base64.b64encode(ct).decode(),
+    }
+
+
+def encrypt_payload_b64_legacy(data: bytes, public_key: RSAPublicKey) -> dict[str, str | list[str]]:
+    """Pure RSA-OAEP chunking (legacy)."""
     if len(data) <= RSA_OAEP_CHUNK_SIZE:
         return {"encrypted": encrypt_to_b64(data, public_key)}
     return {
@@ -81,7 +110,13 @@ def encrypt_payload_b64(data: bytes, public_key: RSAPublicKey) -> dict[str, str 
     }
 
 
-def decrypt_payload_b64(payload: dict[str, str | list[str] | None], private_key: RSAPrivateKey) -> bytes:
+def decrypt_payload_b64(payload: dict[str, Any], private_key: RSAPrivateKey) -> bytes:
+    if payload.get("ek") and payload.get("ct") and payload.get("iv"):
+        aes_key = decrypt_from_b64(str(payload["ek"]), private_key)
+        iv = base64.b64decode(payload["iv"])
+        ct = base64.b64decode(payload["ct"])
+        return AESGCM(aes_key).decrypt(iv, ct, None)
+
     single = payload.get("encrypted")
     if single:
         return decrypt_from_b64(single, private_key)

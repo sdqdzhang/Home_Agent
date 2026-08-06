@@ -1,10 +1,14 @@
 import json
+import logging
 from typing import Any
 
+from app.config import settings
 from app.modules import USER_UI, initial_status, resolve_channel, resolve_module
 from app.models.db import ClientRecord, MessageRecord, SessionLocal, record_to_dict, utc_now
 from app.models.message import InboundMessage, ResponseBody
 from app.services.ws_manager import ws_manager
+
+logger = logging.getLogger(__name__)
 
 
 class MessageService:
@@ -47,9 +51,9 @@ class MessageService:
         if resolve_module(msg.name, msg.target) is None and msg.name != USER_UI:
             data["unknown_module"] = msg.name
 
-        await ws_manager.broadcast(msg.target, {"event": "new_message", "data": data})
+        await self.broadcast_event(msg.target, "new_message", data)
         if channel and channel != msg.target:
-            await ws_manager.broadcast(channel, {"event": "new_message", "data": data})
+            await self.broadcast_event(channel, "new_message", data)
         return data
 
     def list_messages(
@@ -109,10 +113,10 @@ class MessageService:
             data = record_to_dict(record)
 
         data["channel"] = resolve_channel(record.name, record.target)
-        await ws_manager.broadcast(record.target, {"event": "message_updated", "data": data})
-        await ws_manager.broadcast(record.name, {"event": "response_ready", "data": data})
+        await self.broadcast_event(record.target, "message_updated", data)
+        await self.broadcast_event(record.name, "response_ready", data)
         if data["channel"] not in (record.target, record.name):
-            await ws_manager.broadcast(data["channel"], {"event": "message_updated", "data": data})
+            await self.broadcast_event(data["channel"], "message_updated", data)
         return data
 
     async def update_message(
@@ -140,9 +144,9 @@ class MessageService:
             data = record_to_dict(record)
 
         data["channel"] = resolve_channel(record.name, record.target)
-        await ws_manager.broadcast(record.target, {"event": "message_updated", "data": data})
+        await self.broadcast_event(record.target, "message_updated", data)
         if data["channel"] and data["channel"] != record.target:
-            await ws_manager.broadcast(data["channel"], {"event": "message_updated", "data": data})
+            await self.broadcast_event(data["channel"], "message_updated", data)
         return data
 
     def register_client(self, client_id: str, public_key_pem: str) -> dict[str, str]:
@@ -169,15 +173,60 @@ class MessageService:
                 return None
             return record.public_key_pem
 
-    def encrypt_for_client(self, client_id: str, payload: dict[str, Any]) -> dict[str, str | list[str]] | None:
+    def resolve_client_public_key(self, target: str) -> str | None:
+        """Resolve pubkey by client_id or module id/alias."""
+        pem = self.get_client_public_key(target)
+        if pem:
+            return pem
+        mod = resolve_module(target)
+        if mod is None:
+            return None
+        for name in (mod.id, mod.label, *mod.names):
+            pem = self.get_client_public_key(name)
+            if pem:
+                return pem
+        return None
+
+    def encrypt_for_client(self, client_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         from app.crypto.rsa import encrypt_payload_b64, load_public_key_from_pem
 
         pem = self.get_client_public_key(client_id)
+        if not pem:
+            pem = self.resolve_client_public_key(client_id)
         if not pem:
             return None
         public_key = load_public_key_from_pem(pem)
         raw = json.dumps(payload, ensure_ascii=False).encode()
         return encrypt_payload_b64(raw, public_key)
+
+    def encrypt_for_ws_target(self, target: str, data: dict[str, Any]) -> dict[str, Any] | None:
+        from app.crypto.rsa import encrypt_payload_b64, load_public_key_from_pem
+
+        pem = self.resolve_client_public_key(target)
+        if not pem:
+            return None
+        public_key = load_public_key_from_pem(pem)
+        raw = json.dumps(data, ensure_ascii=False).encode()
+        return encrypt_payload_b64(raw, public_key)
+
+    async def broadcast_event(self, target: str, event: str, data: dict[str, Any]) -> None:
+        """Push to WS. Module channels are encrypted when wire_encrypt is on; user_ui stays plaintext."""
+        if not target:
+            return
+
+        if not settings.wire_encrypt or target == USER_UI:
+            await ws_manager.broadcast(target, {"event": event, "data": data})
+            return
+
+        enc = self.encrypt_for_ws_target(target, data)
+        if enc is None:
+            logger.error(
+                "Refusing plaintext WS to %s (no registered client key); event=%s",
+                target,
+                event,
+            )
+            return
+        await ws_manager.broadcast(target, {"event": event, "enc": enc})
 
 
 message_service = MessageService()

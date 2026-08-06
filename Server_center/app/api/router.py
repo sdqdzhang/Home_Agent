@@ -1,12 +1,27 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query
 
+from app.config import settings
 from app.modules import MODULES, module_to_dict, resolve_module
-from app.crypto.rsa import decrypt_payload_b64, encrypt_payload_b64, public_key_to_pem
+from app.crypto.rsa import decrypt_payload_b64, public_key_to_pem
 from app.models.message import ClientRegistration, EncryptedPayload, InboundMessage, MessageUpdateBody, ResponseBody
 from app.services.message_service import message_service
 from app.services.terminal_relay import terminal_relay
 
 router = APIRouter(prefix="/api/v1")
+
+
+def _encrypt_response_for_client(client_id: str | None, data: dict) -> dict:
+    if not settings.wire_encrypt:
+        return data
+    if not client_id:
+        raise HTTPException(
+            status_code=400,
+            detail="X-Client-Id required when SC_WIRE_ENCRYPT is enabled",
+        )
+    encrypted = message_service.encrypt_for_client(client_id, data)
+    if encrypted is None:
+        raise HTTPException(status_code=404, detail=f"Client not registered: {client_id}")
+    return encrypted
 
 
 @router.get("/modules")
@@ -42,7 +57,10 @@ async def post_message_local(msg: InboundMessage) -> dict:
 
 
 @router.post("/messages")
-async def post_message(body: EncryptedPayload) -> dict:
+async def post_message(
+    body: EncryptedPayload,
+    x_client_id: str | None = Header(default=None, alias="X-Client-Id"),
+) -> dict:
     from app.main import server_private_key
 
     try:
@@ -57,7 +75,8 @@ async def post_message(body: EncryptedPayload) -> dict:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     mod = resolve_module(msg.name, msg.target)
-    return {"ok": True, "message": data, "module": mod.id if mod else None}
+    result = {"ok": True, "message": data, "module": mod.id if mod else None}
+    return _encrypt_response_for_client(x_client_id or msg.name, result)
 
 
 @router.get("/messages")
@@ -111,7 +130,11 @@ async def _handle_response(message_id: str, response: ResponseBody) -> dict:
 
 
 @router.post("/messages/{message_id}/respond")
-async def respond_message(message_id: str, body: EncryptedPayload) -> dict:
+async def respond_message(
+    message_id: str,
+    body: EncryptedPayload,
+    x_client_id: str | None = Header(default=None, alias="X-Client-Id"),
+) -> dict:
     from app.main import server_private_key
 
     try:
@@ -120,7 +143,8 @@ async def respond_message(message_id: str, body: EncryptedPayload) -> dict:
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid encrypted response: {exc}") from exc
 
-    return await _handle_response(message_id, response)
+    result = await _handle_response(message_id, response)
+    return _encrypt_response_for_client(x_client_id, result)
 
 
 @router.post("/messages/{message_id}/respond/local")
@@ -143,7 +167,11 @@ async def _handle_update(message_id: str, body: MessageUpdateBody) -> dict:
 
 
 @router.patch("/messages/{message_id}")
-async def update_message(message_id: str, body: EncryptedPayload) -> dict:
+async def update_message(
+    message_id: str,
+    body: EncryptedPayload,
+    x_client_id: str | None = Header(default=None, alias="X-Client-Id"),
+) -> dict:
     from app.main import server_private_key
 
     try:
@@ -151,7 +179,8 @@ async def update_message(message_id: str, body: EncryptedPayload) -> dict:
         update = MessageUpdateBody.model_validate_json(raw)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid encrypted update: {exc}") from exc
-    return await _handle_update(message_id, update)
+    result = await _handle_update(message_id, update)
+    return _encrypt_response_for_client(x_client_id, result)
 
 
 @router.patch("/messages/{message_id}/local")
@@ -162,10 +191,10 @@ async def update_message_local(message_id: str, body: MessageUpdateBody) -> dict
 
 @router.get("/terminal/status")
 def terminal_status() -> dict:
-    from app.config import settings
+    from app.config import settings as sc_settings
 
     return {
-        "enabled": settings.terminal_enabled,
+        "enabled": sc_settings.terminal_enabled,
         "agent_connected": terminal_relay.agent_connected,
     }
 

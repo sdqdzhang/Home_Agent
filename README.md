@@ -16,10 +16,10 @@
 
 ```text
 浏览器 Vue UI
-    │  明文 HTTP / WS（同机信任域）
+    │  明文 HTTP / WS（同机信任域；/local）
     ▼
 Server Center（FastAPI + SQLite）
-    │  RSA 分块加密 HTTP + 按模块 WebSocket
+    │  混合加密 HTTP 往返 + 加密模块 WebSocket + 加密终端桥
     ▼
 Local Agent（FastAPI 单进程）
     ├── main                  主对话 + Function Calling
@@ -39,7 +39,7 @@ Local Agent（FastAPI 单进程）
 - **后端**：Python · FastAPI · Pydantic v2 · SQLAlchemy · SQLite · ChromaDB
 - **LLM**：OpenAI 兼容客户端；槽位注册表按角色绑定（默认 Ollama）
 - **前端**：Vue 3 · Vite · Tailwind · xterm.js · 自研 SVG 任务图画布
-- **通信**：WebSocket 推送 · RSA-OAEP 分块加密（Agent ↔ Server）
+- **通信**：WebSocket 推送 · Local↔Server 混合加密（RSA-OAEP + AES-256-GCM）
 
 ## 文档入口
 

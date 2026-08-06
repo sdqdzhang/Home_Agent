@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 import uuid
@@ -11,13 +12,22 @@ from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPubl
 from shared.server_center.crypto import (
     decrypt_payload_b64,
     encrypt_payload_b64,
+    is_encrypted_payload,
     load_public_key_from_pem,
     public_key_to_pem,
 )
 
 
+def _ascii_wire_id(preferred: str | None, module_name: str) -> str:
+    """HTTP header values must be ASCII; never put Chinese module names in headers."""
+    if preferred and preferred.isascii() and preferred.strip():
+        return preferred.strip()
+    digest = hashlib.sha1(module_name.encode("utf-8")).hexdigest()[:12]
+    return f"mod_{digest}"
+
+
 class ServerCenterClient:
-    """与 Server Center 通信：统一 RSA 分块加密，所有模块复用。"""
+    """与 Server Center 通信：统一混合加密，所有模块复用。"""
 
     def __init__(
         self,
@@ -27,17 +37,28 @@ class ServerCenterClient:
         public_key: RSAPublicKey,
         *,
         id_prefix: str | None = None,
+        wire_encrypt: bool = True,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.module_name = module_name
-        self.id_prefix = id_prefix or module_name.replace("模块", "").replace(" ", "_").lower() or "msg"
+        self.id_prefix = _ascii_wire_id(id_prefix, module_name)
         self.private_key = private_key
         self.public_key = public_key
+        self.wire_encrypt = wire_encrypt
         self._server_public_key: RSAPublicKey | None = None
 
     @property
     def client_id(self) -> str:
+        """业务侧模块名（可含中文），用于消息 name / 注册别名。"""
         return self.module_name
+
+    @property
+    def wire_client_id(self) -> str:
+        """线缆加密用 ASCII id（HTTP Header / 响应加密查找）。"""
+        return self.id_prefix
+
+    def _client_headers(self) -> dict[str, str]:
+        return {"X-Client-Id": self.wire_client_id}
 
     async def ping(self) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -45,17 +66,23 @@ class ServerCenterClient:
             resp.raise_for_status()
             return resp.json()
 
-    async def ensure_registered(self) -> None:
+    async def ensure_registered(self, *extra_client_ids: str) -> None:
         await self._fetch_server_public_key()
+        # 中文 module_name 仅进 JSON body 注册；Header 只用 ASCII wire_client_id
+        ids: list[str] = []
+        for cid in (self.wire_client_id, self.client_id, *extra_client_ids):
+            if cid and cid not in ids:
+                ids.append(cid)
         async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                f"{self.base_url}/api/v1/clients/register",
-                json={
-                    "client_id": self.client_id,
-                    "public_key": public_key_to_pem(self.public_key),
-                },
-            )
-            resp.raise_for_status()
+            for cid in ids:
+                resp = await client.post(
+                    f"{self.base_url}/api/v1/clients/register",
+                    json={
+                        "client_id": cid,
+                        "public_key": public_key_to_pem(self.public_key),
+                    },
+                )
+                resp.raise_for_status()
 
     async def _fetch_server_public_key(self) -> RSAPublicKey:
         if self._server_public_key is not None:
@@ -65,6 +92,14 @@ class ServerCenterClient:
             resp.raise_for_status()
             self._server_public_key = load_public_key_from_pem(resp.json()["public_key"])
             return self._server_public_key
+
+    def _decode_response_body(self, body: dict[str, Any]) -> dict[str, Any]:
+        if is_encrypted_payload(body):
+            plain = decrypt_payload_b64(body, self.private_key)
+            return json.loads(plain.decode("utf-8"))
+        if self.wire_encrypt:
+            raise ValueError("Server returned plaintext while LA_WIRE_ENCRYPT is enabled")
+        return body
 
     def _build_inbound_payload(
         self,
@@ -94,15 +129,16 @@ class ServerCenterClient:
         server_key = await self._fetch_server_public_key()
         plaintext = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         encrypted_body = encrypt_payload_b64(plaintext, server_key)
-        chunk_count = len(encrypted_body.get("encrypted_chunks") or []) or 1
+        chunk_count = 1
         async with httpx.AsyncClient(timeout=timeout) as client:
             url = f"{self.base_url}{path}"
+            headers = self._client_headers()
             if method.upper() == "PATCH":
-                resp = await client.patch(url, json=encrypted_body)
+                resp = await client.patch(url, json=encrypted_body, headers=headers)
             else:
-                resp = await client.post(url, json=encrypted_body)
+                resp = await client.post(url, json=encrypted_body, headers=headers)
             resp.raise_for_status()
-            result = resp.json()
+            result = self._decode_response_body(resp.json())
             result["_encrypted_chunks"] = chunk_count
             result["_plaintext_bytes"] = len(plaintext)
             return result
@@ -147,7 +183,7 @@ class ServerCenterClient:
     ) -> list[dict[str, Any]]:
         params: dict[str, Any] = {
             "name": self.module_name,
-            "encrypted_for": self.client_id,
+            "encrypted_for": self.wire_client_id,
             "limit": limit,
         }
         if status:
@@ -156,12 +192,18 @@ class ServerCenterClient:
             params["msg_type"] = msg_type
 
         async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(f"{self.base_url}/api/v1/messages", params=params)
+            resp = await client.get(
+                f"{self.base_url}/api/v1/messages",
+                params=params,
+                headers=self._client_headers(),
+            )
             resp.raise_for_status()
             body = resp.json()
-            if body.get("encrypted") or body.get("encrypted_chunks"):
+            if is_encrypted_payload(body):
                 plain = decrypt_payload_b64(body, self.private_key)
                 return json.loads(plain.decode("utf-8")).get("messages", [])
+            if self.wire_encrypt:
+                raise ValueError("Server returned plaintext message list while wire encrypt is on")
             return body.get("messages", [])
 
     async def respond(
