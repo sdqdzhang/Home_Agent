@@ -28,9 +28,10 @@ def build_clarify_system(workspace_abs: str) -> str:
 职责：判断信息是否足以生成一张完整、可执行的静态任务图；若不足，发起两类信息请求。
 你不生成任务图，不执行任何动作。
 
-## 已知工作根目录（不要再问用户）
+## 默认工作目录（不要再问用户）
 {ws}
-环境探测与后续规划里的文件路径都必须落在此根下，使用绝对路径。
+未指明路径时以此为默认根；用户或探测已给出的绝对路径可直接使用（不限此根）。
+路径是否允许读写由执行时安全模块判定，规划阶段不要因「不在工作根」而拒绝。
 
 ## 两类信息请求（可同时、可只有其一）
 1. 用户质询（questions）：只有**用户**知道的主观信息。
@@ -38,7 +39,7 @@ def build_clarify_system(workspace_abs: str) -> str:
 2. 环境探测（env_queries）：仅获取**会改变任务图结构**的客观事实。
    例：工作区有哪些文件/目录、某文件是否存在、README 叫什么、在哪个路径、有几个。
    —— 由执行模块执行、并经安全审核。
-   —— **优先** browse_dir / search_file；路径用上面的工作根绝对路径。
+   —— **优先** browse_dir / search_file；未指明时用上面的默认工作目录绝对路径。
    —— 搜 README 类文件时：用 `README*`、`*readme*`、`README.md` 等；
      **禁止**用 `*.readme`（扩展名错误，匹配不到 README.md）。
    —— 若 browse 已能看到目标文件，不要再用错误模式反复搜索。
@@ -54,7 +55,7 @@ def build_clarify_system(workspace_abs: str) -> str:
 不要在 env_queries 里「读取 README 内容」。图内再：read_file → process 总结 → write_file。
 
 ## 核心原则
-1. 信息不足时必须发起请求，不要猜关键细节（但工作根路径已知，不要再问）。
+1. 信息不足时必须发起请求，不要猜关键细节（但默认工作目录已知，不要再问）。
 2. 客观结构事实优先环境探测；主观偏好才问用户。
 3. 已经通过环境探测得到、或用户已回答过的，不要重复请求。
 4. 环境探测失败/被拒绝（见 env_records）不要原样重复；换模式（如 browse）或改问用户。
@@ -150,14 +151,15 @@ ProcessNode.requirement 字段只写**短操作句**，例如「根据附件的�
 - 不要创建 id 为 env* 的节点
 - 不要用环境块代替 read_file 去拿文件正文（除非块内容已是全文且任务不要求再读盘）
 
-## 工作根目录（必须遵守）
-唯一允许的文件/目录根：
+## 路径规则
+默认工作目录：
 {ws}
 
-1. 文件/目录 Action 的 instruction 必须用该根下的**绝对路径**
-2. 禁止猜其它目录（如 Local_agent）
+1. 文件/目录 Action 的 instruction 优先用**绝对路径**（用户/环境块已给出的路径原样使用，可在默认根之外）
+2. 未指明路径时，才落到默认工作目录下；禁止无依据地猜其它目录
 3. 禁止把中文路径译成英文（「项目」≠ project）
-4. 优先直接 write_file（会自动建父目录）；不必单独 mkdir，除非只要空目录
+4. 路径安全由执行时安全模块判定；规划不要因路径不在默认根而改写或拒绝
+5. 优先直接 write_file（会自动建父目录）；不必单独 mkdir，除非只要空目录
 
 ## 依赖与产出
 - inputs: [{{"from":"<id|goal|env*>","role":"<role>"}}, ...]
@@ -245,7 +247,12 @@ def render_clarify_user(
     hist = json.dumps(history, ensure_ascii=False, indent=2) if history else "[]"
     envs = json.dumps(env_records or [], ensure_ascii=False, indent=2) if env_records else "[]"
     ws = (workspace_abs or "").rstrip("\\/")
-    ws_line = f"## 工作根目录（已知，勿再问）\n{ws}\n\n" if ws else ""
+    ws_line = (
+        f"## 默认工作目录（已知，勿再问）\n{ws}\n"
+        "（用户/探测已给出的绝对路径可原样使用，不限此根）\n\n"
+        if ws
+        else ""
+    )
     return (
         f"{ws_line}"
         f"## 用户目标\n{goal.strip()}\n\n"
@@ -274,7 +281,7 @@ def render_plan_user(
     else:
         env_section = "## 环境块\n（无）\n\n"
     return (
-        f"## 工作根目录（绝对路径，必须使用）\n{ws}\n\n"
+        f"## 默认工作目录（未指明路径时使用；用户/环境块路径可在其外）\n{ws}\n\n"
         f"## 用户目标（已含澄清补充）\n{effective_goal.strip()}\n\n"
         f"{env_section}"
         "请生成完整任务图 JSON。\n"

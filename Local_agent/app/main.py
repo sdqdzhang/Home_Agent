@@ -80,7 +80,12 @@ async def _register_module_client(
     return client
 
 
-async def _start_ws_listeners(channels: tuple[str, ...], handler) -> None:
+async def _start_ws_listeners(
+    channels: tuple[str, ...],
+    handler,
+    *,
+    on_connect=None,
+) -> None:
     private_key, _ = ensure_client_keys(settings.keys_dir, settings.rsa_key_size)
     for channel in channels:
         listener = WebSocketListener(
@@ -90,6 +95,8 @@ async def _start_ws_listeners(channels: tuple[str, ...], handler) -> None:
             wire_encrypt=settings.wire_encrypt,
         )
         listener.on_message(handler)
+        if on_connect is not None:
+            listener.on_connect(on_connect)
         await listener.start()
         _ws_listeners.append(listener)
         logger.info("WebSocket listener started on channel: %s", channel)
@@ -161,7 +168,11 @@ async def lifespan(_: FastAPI):
     llm_config_service = LlmConfigService(server_client=llm_client)
     await env_service.start(use_model=True)
 
-    await _start_ws_listeners((CRAWLER_ID,), _dedupe_ws_handler(crawler_service.handle_incoming_message))
+    await _start_ws_listeners(
+        (CRAWLER_ID,),
+        _dedupe_ws_handler(crawler_service.handle_incoming_message),
+        on_connect=crawler_service.catch_up_pending_crawls,
+    )
     await _start_ws_listeners((ENV_ID,), _dedupe_ws_handler(env_service.handle_incoming_message))
     await _start_ws_listeners((RAG_ID,), _dedupe_ws_handler(rag_service.handle_incoming_message))
     await _start_ws_listeners(

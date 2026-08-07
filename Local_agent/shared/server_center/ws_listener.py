@@ -39,10 +39,15 @@ class WebSocketListener:
         self.private_key = private_key
         self.wire_encrypt = wire_encrypt
         self._handlers: list[MessageHandler] = []
+        self._connect_handlers: list[Callable[[], Awaitable[None]]] = []
         self._task: asyncio.Task[None] | None = None
 
     def on_message(self, handler: MessageHandler) -> None:
         self._handlers.append(handler)
+
+    def on_connect(self, handler: Callable[[], Awaitable[None]]) -> None:
+        """每次 WS 连通（含重连）后回调，用于补拉未送达消息。"""
+        self._connect_handlers.append(handler)
 
     async def start(self) -> None:
         if self._task and not self._task.done():
@@ -63,6 +68,11 @@ class WebSocketListener:
             try:
                 async with websockets.connect(self.ws_url) as ws:
                     logger.info("WebSocket connected: %s", self.ws_url)
+                    for handler in self._connect_handlers:
+                        try:
+                            await handler()
+                        except Exception:
+                            logger.exception("WebSocket on_connect handler error on %s", self.channel)
                     async for raw in ws:
                         try:
                             event = json.loads(raw)

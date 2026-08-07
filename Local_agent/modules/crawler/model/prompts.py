@@ -35,7 +35,8 @@ URL: {url}
 错误: {error}
 模型建议: {suggestions}
 
-可调整字段: timeout, user_agent, headers, wait_until, wait_selector, playwright_timeout_ms, playwright_headless, max_entries"""
+可调整字段: timeout, user_agent, headers, http_client, wait_until, wait_selector, playwright_timeout_ms, playwright_headless, max_entries, save_debug_html
+http_client 可选: auto | httpx | curl_cffi（策略名仍为 httpx_bs4，不改变路由）"""
 
 PICK_FILTER_PROMPT = """从以下过滤结果中选出最满足任务的一项。
 

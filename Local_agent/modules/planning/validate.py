@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from modules.planning import GOAL_BLOCK_ID
@@ -12,10 +11,6 @@ from modules.planning.schemas import (
     ActionNode,
     ProcessNode,
     TaskGraph,
-)
-
-_ABS_PATH_RE = re.compile(
-    r"(?:[A-Za-z]:[\\/][^\s\"'<>|]+|\\\\[^\s\"'<>|]+)",
 )
 
 
@@ -28,10 +23,11 @@ def workspace_abs() -> str:
 def validate_task_graph(
     graph: TaskGraph,
     *,
-    workspace: str | None = None,
     initial_block_ids: frozenset[str] | None = None,
 ) -> list[str]:
     """返回错误列表；空列表表示通过。
+
+    只校验图结构与 DataBlock 约定；路径是否可访问由执行时安全模块判定。
 
     initial_block_ids：规划期提供的初始块 id（如环境块 env1），允许被 from 引用。
     """
@@ -40,8 +36,6 @@ def validate_task_graph(
         errors.append("任务图不能为空")
         return errors
 
-    ws = (workspace or workspace_abs()).rstrip("\\/")
-    ws_norm = ws.replace("/", "\\").lower()
     init_ids = initial_block_ids or frozenset()
     initial_ids = {GOAL_BLOCK_ID} | set(init_ids)
 
@@ -96,15 +90,6 @@ def validate_task_graph(
                     f"ActionNode {node.id!r} 产出 type=file 且有输入时，"
                     "应声明恰好一个 role=body（代码/文本正文）"
                 )
-
-            for m in _ABS_PATH_RE.finditer(node.instruction):
-                raw = m.group(0).rstrip("\\/,.;:)")
-                cand = raw.replace("/", "\\").lower()
-                if not (cand == ws_norm or cand.startswith(ws_norm + "\\")):
-                    errors.append(
-                        f"ActionNode {node.id!r} 中的绝对路径不在工作根下: {raw} "
-                        f"（工作根={ws}）"
-                    )
 
     adj: dict[str, list[str]] = {nid: [] for nid in node_map}
     indegree = {nid: 0 for nid in node_map}

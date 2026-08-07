@@ -4,7 +4,7 @@
 
 ## 已接通
 
-- FC 循环（`main.chat` slot）+ 工具表：`planning_run` / `executor_run` / `rag_*` / `env_*` / `crawler_fetch`
+- FC 循环（`main.chat` slot）+ 工具表：`planning_run` / `executor_run` / `rag_*` / `env_*` / `crawler_fetch` / `crawler_fetch_batch`（多 URL 并行入队，可选只回 md 路径）
 - 规划黑盒桥接：质询进主对话时间线，模型只收最终结构化结果；等待用户回答时阻塞 FC
 - 每轮开始拉取 `conversation_manager.context_for_main` 与 `emotion.context_for_main`
 - 每轮结束后依次：`conversation_manager.on_turn_end` → `emotion.on_turn_end`

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, Awaitable, Callable
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 SLOT_KEY = "main.chat"
 MAX_TOOL_ROUNDS = 8
 RECENT_TURNS = 6
+_CRAWLER_TOOLS = frozenset({"crawler_fetch", "crawler_fetch_batch"})
 
 OnText = Callable[[str], Awaitable[None]]
 
@@ -41,7 +43,46 @@ def _trim_tool_data(data: dict[str, Any]) -> dict[str, Any]:
         out["stderr"] = out["stderr"][:500]
     if isinstance(out.get("content"), str):
         out["content"] = out["content"][:3000]
+    items = out.get("items")
+    if isinstance(items, list):
+        trimmed_items: list[Any] = []
+        for it in items:
+            if not isinstance(it, dict):
+                trimmed_items.append(it)
+                continue
+            d = dict(it)
+            if isinstance(d.get("content"), str):
+                d["content"] = d["content"][:3000]
+            trimmed_items.append(d)
+        out["items"] = trimmed_items
     return out
+
+
+def _append_tool_result(
+    messages: list[dict[str, Any]],
+    tool_trace: list[dict[str, Any]],
+    *,
+    name: str,
+    args: dict[str, Any],
+    tc_id: str,
+    result: ToolResultForModel,
+) -> None:
+    tool_trace.append({"tool": name, "args": args, "result": result.model_dump()})
+    payload = {
+        "ok": result.ok,
+        "summary": result.summary,
+        "data": _trim_tool_data(result.data),
+        "error": result.error,
+    }
+    # 批量 path_only 可能条目较多，略放宽上限
+    limit = 16000 if name == "crawler_fetch_batch" else 8000
+    messages.append(
+        {
+            "role": "tool",
+            "tool_call_id": tc_id,
+            "content": json.dumps(payload, ensure_ascii=False)[:limit],
+        }
+    )
 
 
 class MainAssistant:
@@ -191,30 +232,55 @@ class MainAssistant:
                 }
             )
 
-            for tc in tool_calls:
-                tc_id = str(tc.get("id") or "")
+            # 同轮爬取工具并行入队；其它工具仍串行
+            i = 0
+            while i < len(tool_calls):
+                tc = tool_calls[i]
                 fn = tc.get("function") or {}
                 name = str(fn.get("name") or "")
+
+                if name in _CRAWLER_TOOLS:
+                    group: list[tuple[str, str, dict[str, Any]]] = []
+                    while i < len(tool_calls):
+                        gtc = tool_calls[i]
+                        gfn = gtc.get("function") or {}
+                        gname = str(gfn.get("name") or "")
+                        if gname not in _CRAWLER_TOOLS:
+                            break
+                        gid = str(gtc.get("id") or "")
+                        gargs = parse_tool_arguments(gfn.get("arguments"))
+                        group.append((gid, gname, gargs))
+                        i += 1
+                    results = await asyncio.gather(
+                        *[runtime.invoke(gname, gargs, request_id=gid) for gid, gname, gargs in group]
+                    )
+                    for (gid, gname, gargs), result in zip(group, results):
+                        if result.data.get("_pending_clarify"):
+                            raise PendingPlanning(gid)
+                        _append_tool_result(
+                            messages,
+                            tool_trace,
+                            name=gname,
+                            args=gargs,
+                            tc_id=gid,
+                            result=result,
+                        )
+                    continue
+
+                tc_id = str(tc.get("id") or "")
                 args = parse_tool_arguments(fn.get("arguments"))
                 result = await runtime.invoke(name, args, request_id=tc_id)
-
                 if result.data.get("_pending_clarify"):
                     raise PendingPlanning(tc_id)
-
-                tool_trace.append({"tool": name, "args": args, "result": result.model_dump()})
-                payload = {
-                    "ok": result.ok,
-                    "summary": result.summary,
-                    "data": _trim_tool_data(result.data),
-                    "error": result.error,
-                }
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc_id,
-                        "content": json.dumps(payload, ensure_ascii=False)[:8000],
-                    }
+                _append_tool_result(
+                    messages,
+                    tool_trace,
+                    name=name,
+                    args=args,
+                    tc_id=tc_id,
+                    result=result,
                 )
+                i += 1
 
             # 本轮工具已完成 → 强制纯文本说明（不再挂 tools，避免空回复）
             try:

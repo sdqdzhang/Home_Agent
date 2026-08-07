@@ -29,8 +29,13 @@ class CrawlerService:
         crawler_settings.data_dir.mkdir(parents=True, exist_ok=True)
         crawler_settings.logs_dir.mkdir(parents=True, exist_ok=True)
         crawler_settings.artifacts_dir.mkdir(parents=True, exist_ok=True)
+        crawler_settings.texts_dir.mkdir(parents=True, exist_ok=True)
 
-        self.store = JobStore(crawler_settings.db_path, crawler_settings.artifacts_dir)
+        self.store = JobStore(
+            crawler_settings.db_path,
+            crawler_settings.artifacts_dir,
+            crawler_settings.texts_dir,
+        )
         self.memory = ConversationMemory(crawler_settings.db_path)
         self.assistant = CrawlerAssistant()
         self.orchestrator = CrawlOrchestrator(self.store, self.assistant)
@@ -39,6 +44,96 @@ class CrawlerService:
         self._bg_tasks: set[asyncio.Task[Any]] = set()
         # request_id / job key → 已创建的 execution_log 消息 id（同任务原地更新）
         self._log_msg_ids: dict[str, str] = {}
+        # 正在处理 / 已接受的 request_id，避免 WS 补拉与实时推送重复执行
+        self._inflight_requests: set[str] = set()
+
+    async def catch_up_pending_crawls(self, *, limit: int = 40) -> int:
+        """WS 连通后补拉未执行的用户爬取请求（解决首次广播无人订阅而丢失）。"""
+        if not self.server:
+            return 0
+        recovered = 0
+        seen_ids: set[str] = set()
+        for target in (MODULE_NAME, "crawler"):
+            try:
+                messages = await self.server.fetch_messages(
+                    target=target,
+                    name="user_ui",
+                    limit=limit,
+                )
+            except Exception:
+                logger.exception("crawler catch-up fetch failed target=%s", target)
+                continue
+            # 服务端按时间倒序；从旧到新处理，保持自然顺序
+            for data in reversed(messages):
+                mid = str(data.get("id") or "")
+                if not mid or mid in seen_ids:
+                    continue
+                seen_ids.add(mid)
+                if await self._try_accept_crawl_message(data, source="catch_up"):
+                    recovered += 1
+        if recovered:
+            logger.info("crawler catch-up spawned %d pending crawl(s)", recovered)
+        return recovered
+
+    async def _crawl_already_handled(self, request_id: str) -> bool:
+        rid = (request_id or "").strip()
+        if not rid:
+            return False
+        if rid in self._inflight_requests or rid in self._log_msg_ids:
+            return True
+        if not self.server:
+            return False
+        try:
+            existing = await self.server.get_message(f"crawl_log_{rid}")
+        except Exception:
+            return False
+        if not existing:
+            return False
+        # 已有 crawl_log_* 即视为已接手（含 running/完成）
+        return True
+
+    async def _try_accept_crawl_message(self, data: dict[str, Any], *, source: str) -> bool:
+        """若消息含 url 且尚未处理，则后台启动爬取。返回是否新启动。"""
+        if data.get("name") != "user_ui":
+            return False
+        target = data.get("target", "")
+        if target not in (MODULE_NAME, "crawler", "网页爬取模块"):
+            return False
+
+        message = data.get("message") or {}
+        if isinstance(message, str):
+            try:
+                message = json.loads(message)
+            except Exception:
+                message = {}
+        payload = message.get("payload") or message
+        if not isinstance(payload, dict):
+            payload = {}
+        url = str(payload.get("url") or message.get("url") or "").strip()
+        if not url:
+            return False
+
+        request_id = str(payload.get("request_id") or message.get("request_id") or "").strip()
+        if request_id and await self._crawl_already_handled(request_id):
+            logger.debug("crawler skip duplicate request_id=%s source=%s", request_id, source)
+            return False
+
+        task = str(payload.get("task") or message.get("text") or "").strip()
+        config = payload.get("config") if isinstance(payload.get("config"), dict) else None
+        use_model = payload.get("use_model")
+        if use_model is None and isinstance(config, dict) and "use_model" in config:
+            use_model = config.get("use_model")
+        if request_id:
+            self._inflight_requests.add(request_id)
+        self._spawn_crawl(
+            url,
+            task=task,
+            config=config,
+            request_id=request_id,
+            use_model=True if use_model is None else bool(use_model),
+        )
+        logger.info("crawler accepted url=%s request_id=%s source=%s", url, request_id or "-", source)
+        return True
 
     async def handle_incoming_message(self, data: dict[str, Any]) -> None:
         """处理来自 Server Center WebSocket 的用户消息。"""
@@ -51,30 +146,22 @@ class CrawlerService:
         msg_type = data.get("msg_type", "text")
         message = data.get("message") or {}
         msg_id = data.get("id", "")
-        payload = message.get("payload") or message
-        url = str(payload.get("url") or message.get("url") or "").strip()
-        request_id = str(payload.get("request_id") or message.get("request_id") or "")
+        if isinstance(message, str):
+            try:
+                message = json.loads(message)
+            except Exception:
+                message = {}
+        payload = message.get("payload") or message if isinstance(message, dict) else {}
+        url = str((payload or {}).get("url") or (message or {}).get("url") or "").strip()
 
         # 带 url 的请求一律走爬取（含 msg_type=text，避免被对话抢走）
         if url:
-            task = str(payload.get("task") or message.get("text") or "").strip()
-            config = payload.get("config") if isinstance(payload.get("config"), dict) else None
-            use_model = payload.get("use_model")
-            if use_model is None and isinstance(config, dict) and "use_model" in config:
-                use_model = config.get("use_model")
-            # 后台并行执行，不阻塞 WebSocket 后续消息
-            self._spawn_crawl(
-                url,
-                task=task,
-                config=config,
-                request_id=request_id,
-                use_model=True if use_model is None else bool(use_model),
-            )
+            await self._try_accept_crawl_message(data, source="ws")
             return
 
         if msg_type == "text":
-            text = message.get("text", "").strip()
-            session_id = message.get("session_id") or "default"
+            text = (message or {}).get("text", "").strip()
+            session_id = (message or {}).get("session_id") or "default"
             await self.chat(text, session_id=session_id, reply_to_id=msg_id)
 
     def _spawn_crawl(
@@ -86,6 +173,8 @@ class CrawlerService:
         request_id: str = "",
         use_model: bool = True,
     ) -> asyncio.Task[Any]:
+        rid = (request_id or "").strip()
+
         async def _job() -> None:
             try:
                 await self.submit_crawl(
@@ -98,6 +187,9 @@ class CrawlerService:
                 )
             except Exception:
                 logger.exception("Background crawl failed: %s", url)
+            finally:
+                if rid:
+                    self._inflight_requests.discard(rid)
 
         bg = asyncio.create_task(_job())
         self._bg_tasks.add(bg)
@@ -179,6 +271,44 @@ class CrawlerService:
             )
         return outcome
 
+    async def submit_crawl_batch(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        default_task: str = "",
+        notify: bool = True,
+        use_model: bool = True,
+    ) -> list[dict[str, Any]]:
+        """并行提交多条爬取；并发上限由 `_crawl_sem`（默认 5）控制，完成一条即补下一条。
+
+        items 每项：`url`（必填），可选 `task` / `request_id` / `ui_msg_id` / `config`。
+        """
+        if not items:
+            return []
+
+        async def _one(item: dict[str, Any]) -> dict[str, Any]:
+            url = str(item.get("url") or "").strip()
+            if not url:
+                return {"success": False, "error": "empty url", "url": url}
+            try:
+                outcome = await self.submit_crawl(
+                    url,
+                    task=str(item.get("task") or default_task or "").strip(),
+                    config=item.get("config") if isinstance(item.get("config"), dict) else None,
+                    notify=notify,
+                    request_id=str(item.get("request_id") or "").strip(),
+                    use_model=use_model,
+                    ui_msg_id=str(item.get("ui_msg_id") or "").strip(),
+                )
+                if isinstance(outcome, dict):
+                    return {**outcome, "url": outcome.get("url") or url}
+                return {"success": False, "error": str(outcome), "url": url}
+            except Exception as exc:
+                logger.exception("batch crawl item failed: %s", url)
+                return {"success": False, "error": str(exc), "url": url, "log": [str(exc)]}
+
+        return list(await asyncio.gather(*[_one(it) for it in items]))
+
     async def chat(
         self,
         user_message: str,
@@ -212,9 +342,11 @@ class CrawlerService:
             {
                 "recent_jobs": jobs,
                 "artifact_files": artifacts,
+                "text_exports": self.store.list_text_exports()[-20:],
                 "log_files": log_files,
                 "logs_dir": str(crawler_settings.logs_dir),
                 "artifacts_dir": str(crawler_settings.artifacts_dir),
+                "texts_dir": str(crawler_settings.texts_dir),
             },
             ensure_ascii=False,
             indent=2,
