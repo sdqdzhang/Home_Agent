@@ -28,9 +28,13 @@ class ChatRequest(BaseModel):
 
 
 def _get_service():
-    from app.main import crawler_service
+    from fastapi import HTTPException
+    from shared.local_bus import LocalBusError, get_service
 
-    return crawler_service
+    try:
+        return get_service("crawler")
+    except LocalBusError as exc:
+        raise HTTPException(503, str(exc)) from exc
 
 
 @router.post("/crawl")

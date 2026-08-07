@@ -1,0 +1,56 @@
+"""扩展模块契约与加载器 / 安装器。
+
+契约文档：docs/extension-contract.md
+"""
+
+from shared.extensions.contract import (
+    CONTRACT_API_VERSION,
+    EXTENSIONS_DIR_NAME,
+    HTTP_INSTALL,
+    HTTP_ITEM,
+    HTTP_LIST,
+    HTTP_PREFIX,
+    INSTALLED_STATE_FILE,
+    PACKAGE_SUFFIX,
+    POST_INSTALL_ACTIONS,
+    ApplyMode,
+    ExtensionManifest,
+    ExtensionStatus,
+    InstallResult,
+    InstalledExtension,
+    InstalledState,
+    KNOWN_PERMISSIONS,
+    LlmSlotDecl,
+    PostInstallAction,
+    ToolSpec,
+    UninstallResult,
+    validate_manifest_id,
+    validate_permissions,
+    validate_post_install,
+)
+
+__all__ = [
+    "CONTRACT_API_VERSION",
+    "EXTENSIONS_DIR_NAME",
+    "HTTP_INSTALL",
+    "HTTP_ITEM",
+    "HTTP_LIST",
+    "HTTP_PREFIX",
+    "INSTALLED_STATE_FILE",
+    "PACKAGE_SUFFIX",
+    "POST_INSTALL_ACTIONS",
+    "ApplyMode",
+    "ExtensionManifest",
+    "ExtensionStatus",
+    "InstallResult",
+    "InstalledExtension",
+    "InstalledState",
+    "KNOWN_PERMISSIONS",
+    "LlmSlotDecl",
+    "PostInstallAction",
+    "ToolSpec",
+    "UninstallResult",
+    "validate_manifest_id",
+    "validate_permissions",
+    "validate_post_install",
+]

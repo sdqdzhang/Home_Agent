@@ -95,6 +95,7 @@ export const AGENTS = [
     icon: '◍',
     description: '网页抓取（主对话扩展工具）；过滤预览，可将正文保存为文件',
     defaultMsgTypes: ['execution_log'],
+    extension: true,
   },
   {
     id: 'rag',

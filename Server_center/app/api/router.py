@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, File, Header, HTTPException, Query, UploadFile
 
 from app.config import settings
 from app.modules import MODULES, module_to_dict, resolve_module
@@ -197,6 +197,57 @@ def terminal_status() -> dict:
         "enabled": sc_settings.terminal_enabled,
         "agent_connected": terminal_relay.agent_connected,
     }
+
+
+@router.get("/extensions")
+async def list_local_extensions() -> dict:
+    """代理 Local Agent 已安装扩展列表。"""
+    import httpx
+
+    url = settings.local_agent_url.rstrip("/") + "/extensions"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            res = await client.get(url)
+            res.raise_for_status()
+            return res.json()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Local Agent 不可用: {exc}") from exc
+
+
+@router.post("/extensions/install")
+async def install_local_extension(file: UploadFile = File(...)) -> dict:
+    """前端上传 .hamod → 转发 Local Agent 同一安装入口。"""
+    import httpx
+
+    raw = await file.read()
+    url = settings.local_agent_url.rstrip("/") + "/extensions/install"
+    try:
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            res = await client.post(url, files={"file": (file.filename or "pkg.hamod", raw)})
+            if res.status_code >= 400:
+                raise HTTPException(status_code=res.status_code, detail=res.text)
+            return res.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"安装失败: {exc}") from exc
+
+
+@router.delete("/extensions/{module_id}")
+async def uninstall_local_extension(module_id: str) -> dict:
+    import httpx
+
+    url = settings.local_agent_url.rstrip("/") + f"/extensions/{module_id}"
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            res = await client.delete(url)
+            if res.status_code >= 400:
+                raise HTTPException(status_code=res.status_code, detail=res.text)
+            return res.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"卸载失败: {exc}") from exc
 
 
 @router.post("/clients/register")

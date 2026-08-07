@@ -8,3 +8,6 @@ keys/
 venv/
 
 workspace/
+extensions/installed.json
+extensions/*/
+!extensions/.gitkeep

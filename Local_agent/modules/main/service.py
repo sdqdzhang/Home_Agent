@@ -17,7 +17,7 @@ from modules.main.runtime import ToolRuntime
 from modules.main.schemas import ToolResultForModel
 from modules.main.tools import tools_for_openai
 from modules.planning.schemas import ClarifyAnswer
-from shared.local_bus import LocalBusError, call, get_service
+from shared.local_bus import call
 
 logger = logging.getLogger(__name__)
 
@@ -36,15 +36,9 @@ def _stamp_user_text(text: str, *, when: datetime | None = None) -> str:
 
 
 def _available_modules() -> set[str]:
-    ids = ("planning", "executor", "rag", "env", "crawler", "memory", "conversation_manager")
-    out: set[str] = set()
-    for mid in ids:
-        try:
-            get_service(mid)
-            out.add(mid)
-        except LocalBusError:
-            continue
-    return out
+    from shared.local_bus import list_registered_module_ids
+
+    return list_registered_module_ids()
 
 
 @dataclass

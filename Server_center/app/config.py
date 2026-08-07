@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     terminal_enabled: bool = True
     # Local↔Server 线缆加密（HTTP 响应 + 模块 WS + 终端桥）；UI /local 不受影响
     wire_encrypt: bool = True
+    # 本机 Local Agent（扩展列表 / 安装代理）
+    local_agent_url: str = "http://127.0.0.1:8770"
 
 
 settings = Settings()

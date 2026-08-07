@@ -6,6 +6,12 @@ export async function fetchModules() {
   return res.json()
 }
 
+export async function fetchExtensions() {
+  const res = await fetch('/api/v1/extensions')
+  if (!res.ok) throw new Error(`加载扩展列表失败: ${res.status}`)
+  return res.json()
+}
+
 export async function fetchHealth() {
   const res = await fetch('/health')
   if (!res.ok) throw new Error('health check failed')

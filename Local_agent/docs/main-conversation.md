@@ -2,7 +2,7 @@
 
 > 状态：**已接通**。main FC、`conversation.analyze`、Mind（`emotion` / `mind.analyze` / 人格 YAML）、planning 黑盒、记忆候选 `observe` 均已落地。  
 > 模块：`main`、`conversation_manager`、`emotion`（Mind）。  
-> 待办：扩展模块即插即用扫描、Open Tasks「继续」语义等（见文末）。
+> 待办：Open Tasks「继续」语义等（见文末）。扩展即插即用见 `docs/extension-contract.md`。
 
 ## 1. 职责切分
 
@@ -98,7 +98,7 @@ main FC → planning | executor | rag | env | crawler(扩展)…
 - [x] Mind 模块骨架、规则、衰减、`mind.analyze`、main 注入与轮末通知  
 - [x] `persona_state` 推送  
 - [x] 人格 YAML/JSON 加载器与热切换（见 PERSONA.md）  
-- [ ] 扩展模块即插即用扫描完善  
+- [x] 扩展模块即插即用（契约 + installer/loader/API；样板 crawler）
 - [x] 主对话富消息专用渲染（execution_log / system_status；截图/拍照沿用专用卡片）  
 - [ ] Open Tasks「继续」语义增强  
 

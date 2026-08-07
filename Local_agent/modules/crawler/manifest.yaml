@@ -1,0 +1,63 @@
+# 网页爬取扩展（契约 v1）
+# 权威字段：docs/extension-contract.md
+
+api_version: 1
+
+id: crawler
+name: 网页爬取模块
+aliases:
+  - crawler
+  - 网页爬取模块
+version: "0.1.0"
+description: 网页抓取（主对话扩展工具）；过滤预览，可将正文保存为文件
+tier: extension
+
+entry:
+  capability: capability
+
+provides:
+  methods:
+    - submit_crawl
+    - submit_crawl_batch
+
+provides_tools: true
+
+llm_slots:
+  - key: crawler.pipeline
+    capability: chat
+    label: 爬取管道
+    description: 爬取判断、调参、过滤器择优等
+  - key: crawler.chat
+    capability: chat
+    label: 爬取对话
+    description: 爬虫模块用户对话
+
+requires:
+  python: ">=3.11"
+  packages:
+    - httpx
+    - beautifulsoup4
+  modules: []
+
+post_install: []
+
+permissions:
+  - network
+  - fs_data
+
+ui:
+  label: 网页爬取
+  icon: "◍"
+  default_msg_types:
+    - execution_log
+  workspace: host
+
+http:
+  router: router:router
+
+ws:
+  channels: auto
+  on_message: handle_incoming_message
+  on_connect: catch_up_pending_crawls
+
+default_msg_type: execution_log

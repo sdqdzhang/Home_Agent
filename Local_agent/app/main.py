@@ -2,15 +2,13 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 
 from app.config import settings
 from shared.server_center import ServerCenterClient, WebSocketListener, ensure_client_keys
 from shared.llm import LlmConfigService, MODULE_ID as LLM_ID, get_model_registry
-from modules.crawler import MODULE_ID as CRAWLER_ID
-from modules.crawler.router import router as crawler_router
-from modules.crawler.service import CrawlerService
 from modules.env import MODULE_ID as ENV_ID
 from modules.env.router import router as env_router
 from modules.env.service import EnvService
@@ -38,11 +36,17 @@ from modules.conversation_manager.service import ConversationManagerService
 from modules.emotion import MODULE_ID as EMOTION_ID
 from modules.emotion.service import EmotionService
 from modules.terminal.bridge import TerminalBridge
+from modules.crawler.router import router as crawler_router
+from shared.extensions.installer import ensure_default_bundled
+from shared.extensions.loader import LoaderHost, load_all_enabled, set_host
+from shared.extensions.registry import list_loaded_ids
+from shared.extensions.router import router as extensions_router
+from shared.local_bus import list_registered_module_ids
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-crawler_service: CrawlerService | None = None
+crawler_service: Any | None = None
 env_service: EnvService | None = None
 rag_service: RagService | None = None
 security_service: SecurityService | None = None
@@ -85,8 +89,9 @@ async def _start_ws_listeners(
     handler,
     *,
     on_connect=None,
-) -> None:
+) -> list[WebSocketListener]:
     private_key, _ = ensure_client_keys(settings.keys_dir, settings.rsa_key_size)
+    created: list[WebSocketListener] = []
     for channel in channels:
         listener = WebSocketListener(
             settings.server_center_url,
@@ -99,7 +104,9 @@ async def _start_ws_listeners(
             listener.on_connect(on_connect)
         await listener.start()
         _ws_listeners.append(listener)
+        created.append(listener)
         logger.info("WebSocket listener started on channel: %s", channel)
+    return created
 
 
 def _dedupe_ws_handler(handler, *, ttl_seconds: float = 120):
@@ -140,7 +147,17 @@ async def lifespan(_: FastAPI):
     if registry.ensure_seeded():
         logger.info("LLM config DB seeded from .env defaults")
 
-    crawler_client = await _register_module_client("网页爬取模块", "crawler", CRAWLER_ID)
+    ensure_default_bundled(settings.base_dir)
+    set_host(
+        LoaderHost(
+            base_dir=settings.base_dir,
+            register_client=_register_module_client,
+            start_ws=_start_ws_listeners,
+            dedupe_handler=_dedupe_ws_handler,
+            ws_by_module={},
+        )
+    )
+
     env_client = await _register_module_client("环境感知模块", "env", ENV_ID)
     rag_client = await _register_module_client("RAG模块", "rag", RAG_ID)
     security_client = await _register_module_client("安全检查模块", "security", SECURITY_ID, SECURITY_NAME)
@@ -154,7 +171,6 @@ async def lifespan(_: FastAPI):
     llm_client = await _register_module_client("本地Agent", "llm", LLM_ID)
     await _register_module_client("terminal", "terminal")
 
-    crawler_service = CrawlerService(server_client=crawler_client)
     env_service = EnvService(server_client=env_client)
     rag_service = RagService(server_client=rag_client)
     security_service = SecurityService(server_client=security_client)
@@ -168,11 +184,6 @@ async def lifespan(_: FastAPI):
     llm_config_service = LlmConfigService(server_client=llm_client)
     await env_service.start(use_model=True)
 
-    await _start_ws_listeners(
-        (CRAWLER_ID,),
-        _dedupe_ws_handler(crawler_service.handle_incoming_message),
-        on_connect=crawler_service.catch_up_pending_crawls,
-    )
     await _start_ws_listeners((ENV_ID,), _dedupe_ws_handler(env_service.handle_incoming_message))
     await _start_ws_listeners((RAG_ID,), _dedupe_ws_handler(rag_service.handle_incoming_message))
     await _start_ws_listeners(
@@ -187,6 +198,12 @@ async def lifespan(_: FastAPI):
     await _start_ws_listeners((CM_ID,), _dedupe_ws_handler(conversation_manager_service.handle_incoming_message))
     await _start_ws_listeners((EMOTION_ID,), _dedupe_ws_handler(emotion_service.handle_incoming_message))
     await _start_ws_listeners((LLM_ID,), _dedupe_ws_handler(llm_config_service.handle_incoming_message))
+
+    try:
+        loaded = await load_all_enabled()
+        logger.info("extensions loaded: %s", [e.manifest.id for e in loaded])
+    except Exception:
+        logger.exception("failed to load extensions")
 
     terminal_bridge = TerminalBridge()
     await terminal_bridge.start()
@@ -215,25 +232,33 @@ app.include_router(security_router)
 app.include_router(memory_router)
 app.include_router(executor_router)
 app.include_router(processor_router)
+app.include_router(extensions_router)
 
 
 @app.get("/health")
 def health() -> dict[str, object]:
+    modules = {
+        "env": env_service is not None,
+        "rag": rag_service is not None,
+        "security": security_service is not None,
+        "memory": memory_service is not None,
+        "executor": executor_service is not None,
+        "processor": processor_service is not None,
+        "planning": planning_service is not None,
+        "main": main_service is not None,
+        "conversation_manager": conversation_manager_service is not None,
+        "emotion": emotion_service is not None,
+        "llm_config": llm_config_service is not None,
+        "terminal": terminal_bridge is not None and terminal_bridge.running,
+    }
+    for mid in list_loaded_ids():
+        modules[mid] = True
+    # crawler 可能未加载
+    if "crawler" not in modules:
+        modules["crawler"] = crawler_service is not None
     return {
         "status": "ok",
-        "modules": {
-            "crawler": crawler_service is not None,
-            "env": env_service is not None,
-            "rag": rag_service is not None,
-            "security": security_service is not None,
-            "memory": memory_service is not None,
-            "executor": executor_service is not None,
-            "processor": processor_service is not None,
-            "planning": planning_service is not None,
-            "main": main_service is not None,
-            "conversation_manager": conversation_manager_service is not None,
-            "emotion": emotion_service is not None,
-            "llm_config": llm_config_service is not None,
-            "terminal": terminal_bridge is not None and terminal_bridge.running,
-        },
+        "modules": modules,
+        "extensions": sorted(list_loaded_ids()),
+        "registered": sorted(list_registered_module_ids()),
     }

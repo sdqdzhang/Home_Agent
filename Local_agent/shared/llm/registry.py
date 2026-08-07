@@ -35,7 +35,9 @@ class ModelRegistry:
     # --- 槽位元数据 ---
 
     def list_slot_definitions(self) -> list[SlotDefinition]:
-        return list(SLOT_DEFINITIONS)
+        from shared.llm.slots import list_all_slot_definitions
+
+        return list_all_slot_definitions()
 
     # --- 端点 CRUD ---
 
@@ -127,13 +129,16 @@ class ModelRegistry:
 
     def snapshot(self) -> dict[str, Any]:
         """供 WebSocket / 调试：端点、绑定、各 slot 解析结果。"""
+        from shared.llm.slots import list_all_slot_definitions
+
+        slots = list_all_slot_definitions()
         endpoints = [ep.to_dict() for ep in self.list_endpoints()]
         bindings = [binding.to_dict() for binding in self.list_bindings()]
-        resolved = {slot.slot_key: self.resolve(slot.slot_key).to_dict() for slot in SLOT_DEFINITIONS}
+        resolved = {slot.slot_key: self.resolve(slot.slot_key).to_dict() for slot in slots}
         return {
             "endpoints": endpoints,
             "bindings": bindings,
-            "slots": [slot.__dict__ for slot in SLOT_DEFINITIONS],
+            "slots": [slot.__dict__ for slot in slots],
             "resolved": resolved,
         }
 
