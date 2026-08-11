@@ -144,32 +144,60 @@ class EnvService:
         return reply
 
     async def take_screenshot(self, *, push: bool = True) -> dict[str, Any]:
-        shot = await capture_desktop_async()
+        try:
+            shot = await capture_desktop_async()
+        except Exception as exc:
+            logger.exception("Desktop screenshot failed")
+            err = {
+                "ok": False,
+                "error": str(exc),
+                "capture_type": "desktop",
+                "text": f"截图失败：{exc}",
+                "status": "error",
+            }
+            if push and self.server:
+                await self.server.send_message(msg_type=SCREENSHOT_MSG_TYPE, message=err)
+            return err
         if push and self.server:
             await self.server.send_message(
                 msg_type=SCREENSHOT_MSG_TYPE,
                 message={
+                    "ok": True,
                     "text": "远程桌面截图",
                     "capture_type": "desktop",
                     "saved_path": shot.get("saved_path"),
                     **shot,
                 },
             )
-        return shot
+        return {"ok": True, **shot}
 
     async def take_camera_photo(self, *, push: bool = True) -> dict[str, Any]:
-        photo = await capture_camera_async()
+        try:
+            photo = await capture_camera_async()
+        except Exception as exc:
+            logger.exception("Camera capture failed")
+            err = {
+                "ok": False,
+                "error": str(exc),
+                "capture_type": "camera",
+                "text": f"摄像头拍照失败：{exc}",
+                "status": "error",
+            }
+            if push and self.server:
+                await self.server.send_message(msg_type=CAMERA_MSG_TYPE, message=err)
+            return err
         if push and self.server:
             await self.server.send_message(
                 msg_type=CAMERA_MSG_TYPE,
                 message={
+                    "ok": True,
                     "text": "摄像头拍照",
                     "capture_type": "camera",
                     "saved_path": photo.get("saved_path"),
                     **photo,
                 },
             )
-        return photo
+        return {"ok": True, **photo}
 
     async def handle_incoming_message(self, data: dict[str, Any]) -> None:
         if data.get("name") != "user_ui":

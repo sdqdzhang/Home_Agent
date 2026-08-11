@@ -1,7 +1,8 @@
 # 扩展模块契约（v1）
 
-> 状态：**契约已定；installer / loader / HTTP / CLI 已落地（crawler 为内置样板）**。  
-> 第一迁移样板：`modules/crawler`（`manifest.yaml` + `capability.py`，经 `installed.json` 启用）。  
+> 状态：**契约已定；installer / loader / pack / HTTP / CLI / 前端扩展管理已落地**。  
+> **作者入门：** [`extension-author-guide.md`](./extension-author-guide.md)。  
+> 打包备忘：`docs/extension-packaging.md`。样板：`extension_packages/crawler`。  
 > 类型镜像：`shared/extensions/contract.py`。
 
 ---
@@ -115,9 +116,9 @@ ui:
   label: 网页爬取
   icon: "◍"
   default_msg_types: [execution_log]
-  workspace: host                # host | none | bundle(预留)
+  workspace: host                # crawler 特例：主前端已有页；新扩展请用 none
   # host：主前端已有专用页（如 CrawlerWorkspace）
-  # none：侧栏仍显示，点开为通用扩展面板
+  # none：侧栏仍显示，点开为通用扩展面板（未来扩展默认）
 
 http:
   router: router:router
@@ -130,12 +131,31 @@ ws:
 default_msg_type: execution_log
 ```
 
+### `settings`（模块配置，非 LLM）
+
+声明后扩展管理页出现「配置」。模型绑定仍只在模型配置页。
+
+| type | UI |
+|------|-----|
+| `string` / `secret` | 单行输入（secret 密码框，回读掩码） |
+| `text` | 多行 |
+| `number` / `integer` | 数字 |
+| `boolean` | 开关 |
+| `select` | 下拉 |
+| `radio` | 单选 |
+| `multiselect` / `checkbox_group` | 多选 |
+
+包内可选 `settings.defaults.yaml`（开箱默认）。用户值：`data/<id>/settings.json`。  
+生效顺序：`schema.default` ← 包默认文件 ← 用户文件。
+
+API：`GET/PUT /extensions/{id}/settings`，`POST …/settings/reset`。
+
 ### 校验
 
 1. `api_version == 1`；`tier == extension`；`id` 合法且 = 目录名；不与 core id 冲突  
 2. `capability.py` 可导入且有 `create_service`  
 3. `provides_tools` 时校验 `TOOLS`（`module_id`/`tier`）  
-4. 未知 `permissions` / 未知 `post_install.action` → **安装失败**  
+4. 未知 `permissions` / 未知 `post_install.action` / 未知 `settings.type` → **安装失败**  
 5. `llm_slots[].key` 全局唯一（不与已加载 core/其它扩展冲突）  
 6. pip 失败 → 安装失败并回滚本次解压目录  
 
@@ -150,6 +170,7 @@ def create_service(*, server_client, manifest: ExtensionManifest) -> Any: ...
 
 async def on_loaded(service, *, ctx) -> None: ...   # 可选
 async def on_unload(service, *, ctx) -> None: ...   # 可选
+async def on_settings_changed(service, values: dict) -> None: ...  # 可选
 ```
 
 **FC（禁止扩展专用分支）：**

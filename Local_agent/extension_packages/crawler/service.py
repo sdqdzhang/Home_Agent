@@ -11,7 +11,7 @@ from shared.server_center.client import ServerCenterClient
 from modules.crawler import DEFAULT_MSG_TYPE, MODULE_NAME
 from modules.crawler.chat import ConversationMemory
 from modules.crawler.config import crawler_settings
-from modules.crawler.logging import JobLogger
+from modules.crawler.crawl_logging import JobLogger
 from modules.crawler.model import CrawlerAssistant
 from modules.crawler.pipeline import CrawlOrchestrator
 from modules.crawler.storage import JobStore

@@ -16,11 +16,14 @@ from shared.extensions.contract import (
     PostInstallAction,
     ProvidesDecl,
     RequiresDecl,
+    SettingFieldDecl,
+    SettingOption,
     UiDecl,
     WsDecl,
     validate_manifest_id,
     validate_permissions,
     validate_post_install,
+    validate_setting_field_types,
 )
 
 
@@ -36,6 +39,70 @@ def _as_tuple(value: Any) -> tuple[str, ...]:
     if isinstance(value, (list, tuple)):
         return tuple(str(x) for x in value)
     raise ManifestError(f"期望 list/str，收到 {type(value).__name__}")
+
+
+def _parse_setting_options(raw: Any) -> tuple[SettingOption, ...]:
+    if not raw:
+        return ()
+    if not isinstance(raw, list):
+        raise ManifestError("settings.options 必须是列表")
+    out: list[SettingOption] = []
+    for item in raw:
+        if isinstance(item, str):
+            out.append(SettingOption(value=item, label=item))
+            continue
+        if not isinstance(item, dict):
+            raise ManifestError("settings.options 项必须是字符串或对象")
+        value = str(item.get("value") if "value" in item else item.get("id") or "").strip()
+        if not value:
+            raise ManifestError("settings.options.value 不能为空")
+        out.append(SettingOption(value=value, label=str(item.get("label") or value)))
+    return tuple(out)
+
+
+def _parse_settings(raw: Any) -> tuple[SettingFieldDecl, ...]:
+    if not raw:
+        return ()
+    if not isinstance(raw, list):
+        raise ManifestError("settings 必须是列表")
+    out: list[SettingFieldDecl] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ManifestError("settings 项必须是对象")
+        key = str(item.get("key") or "").strip()
+        if not key:
+            raise ManifestError("settings.key 不能为空")
+        if key in seen:
+            raise ManifestError(f"settings.key 重复: {key}")
+        seen.add(key)
+        ftype = str(item.get("type") or "string").strip()
+        options = _parse_setting_options(item.get("options"))
+        if ftype in ("select", "radio", "multiselect", "checkbox_group") and not options:
+            raise ManifestError(f"settings.{key} 类型 {ftype} 需要 options")
+        min_v = item.get("min")
+        max_v = item.get("max")
+        step_v = item.get("step")
+        out.append(
+            SettingFieldDecl(
+                key=key,
+                type=ftype,  # type: ignore[arg-type]
+                label=str(item.get("label") or key),
+                description=str(item.get("description") or ""),
+                default=item.get("default"),
+                required=bool(item.get("required", False)),
+                placeholder=str(item.get("placeholder") or ""),
+                min=float(min_v) if min_v is not None and min_v != "" else None,
+                max=float(max_v) if max_v is not None and max_v != "" else None,
+                step=float(step_v) if step_v is not None and step_v != "" else None,
+                options=options,
+                group=str(item.get("group") or ""),
+            )
+        )
+    bad = validate_setting_field_types(out)
+    if bad:
+        raise ManifestError(f"未知 settings.type: {bad}")
+    return tuple(out)
 
 
 def _parse_llm_slots(raw: Any) -> tuple[LlmSlotDecl, ...]:
@@ -181,6 +248,7 @@ def parse_manifest_dict(data: dict[str, Any]) -> ExtensionManifest:
         provides=provides,
         provides_tools=provides_tools,
         llm_slots=_parse_llm_slots(data.get("llm_slots")),
+        settings=_parse_settings(data.get("settings")),
         requires=requires,
         post_install=post_install,
         permissions=permissions,

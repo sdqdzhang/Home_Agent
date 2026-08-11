@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 RegisterClientFn = Callable[..., Awaitable[Any]]
 StartWsFn = Callable[..., Awaitable[None]]
 DedupeFn = Callable[[Any], Any]
+MountRouterFn = Callable[[Any], None]
 
 
 @dataclass
@@ -38,6 +39,7 @@ class LoaderHost:
     register_client: RegisterClientFn
     start_ws: StartWsFn
     dedupe_handler: DedupeFn
+    mount_router: MountRouterFn
     # module_id → 已启动的 WS listener 列表，便于卸载时 stop
     ws_by_module: dict[str, list[Any]]
 
@@ -58,6 +60,10 @@ def get_host() -> LoaderHost:
 
 def _import_capability(root: Path, manifest: ExtensionManifest) -> Any:
     cap_name = manifest.entry.capability or "capability"
+    root_str = str(root.resolve())
+    if root_str not in sys.path:
+        sys.path.insert(0, root_str)
+
     base = get_host().base_dir.resolve()
     try:
         rel = root.resolve().relative_to(base)
@@ -88,6 +94,42 @@ def _import_capability(root: Path, manifest: ExtensionManifest) -> Any:
         sys.path.insert(0, root_str)
     spec.loader.exec_module(module)
     return module
+
+
+def _import_extension_module(root: Path, manifest: ExtensionManifest, module_file: str) -> Any:
+    """从 extensions/<id>/ 加载单个 .py 模块（已把 root 加入 sys.path）。"""
+    file_path = root / f"{module_file}.py"
+    if not file_path.is_file():
+        raise ManifestError(f"找不到模块文件: {file_path}")
+    mod_name = f"homeagent_ext_{manifest.id}_{module_file}"
+    spec = importlib.util.spec_from_file_location(mod_name, file_path)
+    if spec is None or spec.loader is None:
+        raise ManifestError(f"无法加载模块: {file_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[mod_name] = module
+    root_str = str(root.resolve())
+    if root_str not in sys.path:
+        sys.path.insert(0, root_str)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _import_http_router(root: Path, manifest: ExtensionManifest) -> Any | None:
+    spec_str = (manifest.http.router or "").strip()
+    if not spec_str:
+        return None
+    if ":" not in spec_str:
+        raise ManifestError(f"http.router 格式应为 module:attr，收到 {spec_str!r}")
+    mod_file, attr = spec_str.split(":", 1)
+    mod_file = mod_file.strip()
+    attr = attr.strip()
+    if not mod_file or not attr:
+        raise ManifestError(f"http.router 格式应为 module:attr，收到 {spec_str!r}")
+    module = _import_extension_module(root, manifest, mod_file)
+    router = getattr(module, attr, None)
+    if router is None:
+        raise ManifestError(f"http.router 指向的属性不存在: {spec_str}")
+    return router
 
 
 def _collect_tools(capability: Any, manifest: ExtensionManifest) -> list[ToolSpec]:
@@ -164,6 +206,10 @@ async def load_one(module_id: str, *, root: Path, bundled: bool = False) -> Load
             on_connect=on_connect if callable(on_connect) else None,
         )
         host.ws_by_module[manifest.id] = list(listeners or [])
+
+    http_router = _import_http_router(root, manifest)
+    if http_router is not None:
+        host.mount_router(http_router)
 
     on_loaded = getattr(capability, "on_loaded", None)
     if callable(on_loaded):
@@ -245,9 +291,28 @@ async def load_all_enabled() -> list[LoadedExtension]:
     host = get_host()
     state = load_installed_state(host.base_dir)
     loaded: list[LoadedExtension] = []
-    for module_id, meta in state.extensions.items():
+    for module_id, meta in list(state.extensions.items()):
         if not meta.enabled:
             continue
+        rel = str(meta.path).replace("\\", "/")
+        # 遗留：登记在 modules/ → 从 extension_packages/ 物化后再加载
+        if rel.startswith("modules/"):
+            try:
+                from shared.extensions.installer import materialize_from_source
+
+                src = host.base_dir / "extension_packages" / module_id
+                if not src.is_dir():
+                    src = resolve_extension_path(host.base_dir, meta.path)
+                materialize_from_source(src, host.base_dir, new_id=module_id)
+                state = load_installed_state(host.base_dir)
+                meta = state.extensions[module_id]
+                logger.info("migrated %s from %s to extensions/", module_id, rel)
+            except Exception as exc:
+                logger.exception("migrate %s failed", module_id)
+                meta.status = "error"
+                meta.error = f"migrate failed: {exc}"
+                continue
+
         root = resolve_extension_path(host.base_dir, meta.path)
         if not root.is_dir():
             logger.error("extension path missing: %s -> %s", module_id, root)
@@ -255,7 +320,10 @@ async def load_all_enabled() -> list[LoadedExtension]:
             meta.error = f"path missing: {root}"
             continue
         try:
-            ext = await load_one(module_id, root=root, bundled=is_bundled(host.base_dir, module_id))
+            from shared.extensions.installer import _ensure_self_contained
+
+            _ensure_self_contained(root, module_id)
+            ext = await load_one(module_id, root=root, bundled=False)
             meta.status = "ready"
             meta.error = ""
             loaded.append(ext)

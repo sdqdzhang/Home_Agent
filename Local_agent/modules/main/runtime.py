@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import uuid
 from typing import Any, Awaitable, Callable
-from urllib.parse import urlparse
 
 from modules.executor.schemas import ExecuteRequest, ExecuteResult
 from modules.main.schemas import ToolResultForModel
@@ -21,114 +19,15 @@ PushFn = Callable[..., Awaitable[Any]]
 UpdateFn = Callable[[str, dict[str, Any]], Awaitable[None]]
 PlanningRunner = Callable[[str, str], Awaitable[ToolResultForModel]]
 
-# 批量爬取：未显式传 return_content 且 URL 数达到该值时，只回 md 路径
-_AUTO_PATH_ONLY_MIN_URLS = 3
-
 
 def _truncate(text: str, limit: int = 4000) -> str:
     text = text or ""
     return text if len(text) <= limit else text[:limit] + f"…(+{len(text) - limit})"
 
 
-def _guess_url(text: str) -> str:
-    text = (text or "").strip()
-    if re.match(r"^https?://", text, re.I):
-        return text.split()[0]
-    m = re.search(r"https?://[^\s]+", text, re.I)
-    return m.group(0) if m else ""
-
-
 def _tool_msg_id(tool: str, request_id: str) -> str:
     rid = (request_id or "").strip() or uuid.uuid4().hex[:10]
     return f"main_tool_{tool}_{rid}"
-
-
-def _parse_bool_arg(value: Any) -> bool | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    if isinstance(value, str):
-        s = value.strip().lower()
-        if s in ("1", "true", "yes", "on"):
-            return True
-        if s in ("0", "false", "no", "off"):
-            return False
-    return None
-
-
-def _resolve_return_content(args: dict[str, Any], *, url_count: int) -> bool:
-    explicit = _parse_bool_arg(args.get("return_content"))
-    if explicit is not None:
-        return explicit
-    return url_count < _AUTO_PATH_ONLY_MIN_URLS
-
-
-def _normalize_url_list(raw: Any) -> list[str]:
-    urls: list[str] = []
-    if isinstance(raw, str):
-        text = raw.strip()
-        if text.startswith("["):
-            try:
-                raw = json.loads(text)
-            except json.JSONDecodeError:
-                urls = [u.strip() for u in re.split(r"[\s,]+", text) if u.strip()]
-                raw = None
-        else:
-            urls = [u.strip() for u in re.split(r"[\s,]+", text) if u.strip()]
-            raw = None
-    if isinstance(raw, list):
-        for item in raw:
-            if isinstance(item, str):
-                u = item.strip()
-                if u:
-                    urls.append(u)
-            elif isinstance(item, dict):
-                u = str(item.get("url") or "").strip()
-                if u:
-                    urls.append(u)
-    seen: set[str] = set()
-    out: list[str] = []
-    for u in urls:
-        if u in seen:
-            continue
-        seen.add(u)
-        out.append(u)
-    return out
-
-
-def _valid_http_url(url: str) -> bool:
-    try:
-        return urlparse(url).scheme in ("http", "https")
-    except Exception:
-        return False
-
-
-def _item_from_outcome(
-    outcome: dict[str, Any] | None,
-    *,
-    url: str,
-    return_content: bool,
-) -> dict[str, Any]:
-    outcome = outcome if isinstance(outcome, dict) else {}
-    ok = bool(outcome.get("success"))
-    result = outcome.get("result") if isinstance(outcome.get("result"), dict) else {}
-    title = str(result.get("title") or url)
-    item: dict[str, Any] = {
-        "url": url,
-        "ok": ok,
-        "title": title,
-        "job_id": str(outcome.get("job_id") or ""),
-        "text_path": str(result.get("text_path") or ""),
-        "text_file": str(result.get("text_file") or ""),
-        "error": "" if ok else str(outcome.get("error") or result.get("error") or "crawl failed"),
-    }
-    if return_content:
-        content = str(result.get("content") or result.get("text") or result.get("markdown") or "")
-        item["content"] = _truncate(content, 6000)
-    return item
 
 
 class ToolRuntime:
@@ -185,16 +84,72 @@ class ToolRuntime:
                 return await self._env_capture("screenshot", request_id=request_id)
             if name == "env_camera":
                 return await self._env_capture("camera", request_id=request_id)
-            if name == "crawler_fetch":
-                return await self._crawler(arguments, request_id=request_id)
-            if name == "crawler_fetch_batch":
-                return await self._crawler_batch(arguments, request_id=request_id)
+
+            # 扩展工具：优先 capability.invoke_tool（美化输出在包内）
+            ext_result = await self._invoke_extension_tool(name, arguments, request_id=request_id)
+            if ext_result is not None:
+                return ext_result
+
             return ToolResultForModel(ok=False, tool=name, error=f"未知工具: {name}")
         except LocalBusError as exc:
             return ToolResultForModel(ok=False, tool=name, error=str(exc))
         except Exception as exc:
             logger.exception("tool %s failed", name)
             return ToolResultForModel(ok=False, tool=name, error=f"工具异常: {exc}")
+
+    async def _invoke_extension_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        request_id: str,
+    ) -> ToolResultForModel | None:
+        from shared.extensions.invoke_ctx import ToolInvokeContext
+        from shared.extensions.registry import find_tool_spec, get_loaded
+
+        spec = find_tool_spec(name)
+        if spec is None:
+            return None
+        loaded = get_loaded(spec.module_id)
+        if loaded is None:
+            return ToolResultForModel(ok=False, tool=name, error=f"扩展未加载: {spec.module_id}")
+
+        invoke = getattr(loaded.capability, "invoke_tool", None)
+        if callable(invoke):
+            ctx = ToolInvokeContext(push_card=self._push_card, update_card=self._update_card)
+            result = await invoke(
+                loaded.service,
+                name,
+                arguments,
+                request_id=request_id,
+                ctx=ctx,
+            )
+            if isinstance(result, ToolResultForModel):
+                return result
+            if isinstance(result, dict):
+                return ToolResultForModel(
+                    ok=bool(result.get("ok", True)),
+                    tool=name,
+                    summary=str(result.get("summary") or ""),
+                    data=result.get("data") if isinstance(result.get("data"), dict) else {},
+                    error=str(result.get("error") or ""),
+                )
+            return ToolResultForModel(ok=True, tool=name, summary=str(result), data={})
+
+        # 无 invoke_tool：通用 kwargs 调用
+        try:
+            out = await call(spec.module_id, spec.method, **arguments)
+        except TypeError:
+            out = await call(spec.module_id, spec.method, arguments)
+        if isinstance(out, dict):
+            return ToolResultForModel(
+                ok=bool(out.get("ok", out.get("success", True))),
+                tool=name,
+                summary=str(out.get("summary") or out.get("title") or name),
+                data=out,
+                error=str(out.get("error") or ""),
+            )
+        return ToolResultForModel(ok=True, tool=name, summary=str(out), data={})
 
     async def _planning(self, args: dict[str, Any], *, request_id: str) -> ToolResultForModel:
         task = str(args.get("task") or args.get("instruction") or "").strip()
@@ -500,6 +455,20 @@ class ToolRuntime:
             msg_id=msg_id,
         )
         out = await call("env", method, push=False)
+        if isinstance(out, dict) and out.get("ok") is False:
+            err = str(out.get("error") or f"{label}失败")
+            summary = str(out.get("text") or f"{label}失败：{err}")
+            await self._update_card(
+                msg_id,
+                {
+                    "text": summary,
+                    "capture_type": "desktop" if kind == "screenshot" else "camera",
+                    "status": "error",
+                    "error": err,
+                    "ok": False,
+                },
+            )
+            return ToolResultForModel(ok=False, tool=tool, summary=summary, data=out)
         path = ""
         if isinstance(out, dict):
             path = str(out.get("saved_path") or "")
@@ -508,211 +477,13 @@ class ToolRuntime:
             "text": summary,
             "capture_type": "desktop" if kind == "screenshot" else "camera",
             "saved_path": path,
+            "status": "done",
+            "ok": True,
         }
         if isinstance(out, dict):
             final_msg.update({k: v for k, v in out.items() if k not in ("text",)})
         await self._update_card(msg_id, final_msg)
         return ToolResultForModel(ok=True, tool=tool, summary=summary, data=out if isinstance(out, dict) else {})
-
-    async def _push_crawl_running_card(self, *, url: str, task: str, request_id: str, msg_id: str) -> None:
-        await self._push_card(
-            "execution_log",
-            {
-                "summary": f"爬取中: {url}",
-                "text": f"爬取中: {url}",
-                "status": "running",
-                "log": [f"url: {url}"] + ([f"task: {task}"] if task else []) + ["已提交爬取模块…"],
-                "tool": "crawler_fetch",
-                "ok": True,
-                "payload": {"tool": "crawler_fetch", "url": url},
-                "request_id": request_id,
-            },
-            msg_id=msg_id,
-        )
-
-    async def _finalize_crawl_card(
-        self,
-        msg_id: str,
-        *,
-        item: dict[str, Any],
-        crawl_log: list[Any],
-        request_id: str,
-        return_content: bool,
-    ) -> None:
-        ok = bool(item.get("ok"))
-        url = str(item.get("url") or "")
-        title = str(item.get("title") or url)
-        summary = f"爬取{'成功' if ok else '失败'}: {title}"
-        content = str(item.get("content") or "") if return_content else ""
-        log_lines = [str(x) for x in crawl_log] if crawl_log else [f"url: {url}", summary]
-        if item.get("text_file"):
-            log_lines = list(log_lines) + [f"正文 Markdown: {item.get('text_file')}"]
-        await self._update_card(
-            msg_id,
-            {
-                "summary": summary,
-                "text": summary,
-                "status": "completed" if ok else "failed",
-                "log": log_lines,
-                "tool": "crawler_fetch",
-                "ok": ok,
-                "payload": {
-                    "job_id": item.get("job_id"),
-                    "result": {
-                        "url": url,
-                        "title": title,
-                        "content": content,
-                        "text_path": item.get("text_path") or "",
-                        "text_file": item.get("text_file") or "",
-                        "error": item.get("error") or "",
-                    },
-                    "tool": "crawler_fetch",
-                },
-                "request_id": request_id,
-            },
-        )
-
-    async def _crawler(self, args: dict[str, Any], *, request_id: str) -> ToolResultForModel:
-        url = str(args.get("url") or "").strip()
-        task = str(args.get("task") or "").strip()
-        if not url:
-            raw = str(args.get("url_or_instruction") or "").strip()
-            url = _guess_url(raw)
-            if not task and raw and raw != url:
-                task = raw
-        if not url or not _valid_http_url(url):
-            return ToolResultForModel(ok=False, tool="crawler_fetch", error="需要有效的 http(s) URL")
-
-        return_content = _resolve_return_content(args, url_count=1)
-        msg_id = _tool_msg_id("crawler", request_id)
-        await self._push_crawl_running_card(url=url, task=task, request_id=request_id, msg_id=msg_id)
-
-        outcome = await call(
-            "crawler",
-            "submit_crawl",
-            url,
-            task=task,
-            notify=True,
-            request_id=request_id,
-            use_model=True,
-            ui_msg_id=msg_id,
-        )
-        item = _item_from_outcome(
-            outcome if isinstance(outcome, dict) else {},
-            url=url,
-            return_content=return_content,
-        )
-        crawl_log = outcome.get("log", []) if isinstance(outcome, dict) else []
-        if not isinstance(crawl_log, list):
-            crawl_log = [str(crawl_log)]
-        await self._finalize_crawl_card(
-            msg_id,
-            item=item,
-            crawl_log=crawl_log,
-            request_id=request_id,
-            return_content=return_content,
-        )
-        mode = "content" if return_content else "path_only"
-        summary = f"爬取{'成功' if item['ok'] else '失败'}: {item['title']}"
-        if not return_content and item.get("text_file"):
-            summary = f"{summary} → {item['text_file']}"
-        return ToolResultForModel(
-            ok=bool(item["ok"]),
-            tool="crawler_fetch",
-            summary=summary,
-            data={**item, "mode": mode},
-            error="" if item["ok"] else str(item.get("error") or "crawl failed"),
-        )
-
-    async def _crawler_batch(self, args: dict[str, Any], *, request_id: str) -> ToolResultForModel:
-        urls = _normalize_url_list(args.get("urls") if "urls" in args else args.get("url"))
-        task = str(args.get("task") or "").strip()
-        if not urls:
-            return ToolResultForModel(ok=False, tool="crawler_fetch_batch", error="urls 不能为空")
-
-        valid: list[str] = []
-        invalid: list[str] = []
-        for u in urls:
-            if _valid_http_url(u):
-                valid.append(u)
-            else:
-                invalid.append(u)
-        if not valid:
-            return ToolResultForModel(ok=False, tool="crawler_fetch_batch", error="没有有效的 http(s) URL")
-
-        return_content = _resolve_return_content(args, url_count=len(valid))
-        base = (request_id or "").strip() or uuid.uuid4().hex[:10]
-
-        # 先全部建卡并入队，不展示「共 N 条」
-        prepared: list[dict[str, Any]] = []
-        for idx, url in enumerate(valid):
-            rid = f"{base}_{idx}"
-            msg_id = _tool_msg_id("crawler", rid)
-            await self._push_crawl_running_card(url=url, task=task, request_id=rid, msg_id=msg_id)
-            prepared.append({"url": url, "task": task, "request_id": rid, "ui_msg_id": msg_id})
-
-        outcomes = await call(
-            "crawler",
-            "submit_crawl_batch",
-            prepared,
-            default_task=task,
-            notify=True,
-            use_model=True,
-        )
-        if not isinstance(outcomes, list):
-            outcomes = []
-
-        items: list[dict[str, Any]] = []
-        for prep, outcome in zip(prepared, outcomes):
-            if isinstance(outcome, BaseException):
-                outcome = {"success": False, "error": str(outcome), "url": prep["url"]}
-            item = _item_from_outcome(
-                outcome if isinstance(outcome, dict) else {},
-                url=prep["url"],
-                return_content=return_content,
-            )
-            crawl_log = outcome.get("log", []) if isinstance(outcome, dict) else []
-            if not isinstance(crawl_log, list):
-                crawl_log = [str(crawl_log)]
-            await self._finalize_crawl_card(
-                prep["ui_msg_id"],
-                item=item,
-                crawl_log=crawl_log,
-                request_id=prep["request_id"],
-                return_content=return_content,
-            )
-            items.append(item)
-
-        for u in invalid:
-            items.append(
-                {
-                    "url": u,
-                    "ok": False,
-                    "title": u,
-                    "job_id": "",
-                    "text_path": "",
-                    "text_file": "",
-                    "error": "无效 URL",
-                    **({"content": ""} if return_content else {}),
-                }
-            )
-
-        ok_n = sum(1 for it in items if it.get("ok"))
-        fail_n = len(items) - ok_n
-        mode = "content" if return_content else "path_only"
-        summary = f"批量爬取完成：成功 {ok_n}，失败 {fail_n}"
-        if mode == "path_only":
-            files = [str(it.get("text_file") or "") for it in items if it.get("ok") and it.get("text_file")]
-            if files:
-                summary = f"{summary}；正文已保存为 Markdown（见 text_file）"
-
-        return ToolResultForModel(
-            ok=ok_n > 0 and fail_n == 0,
-            tool="crawler_fetch_batch",
-            summary=summary,
-            data={"mode": mode, "items": items, "ok_count": ok_n, "fail_count": fail_n},
-            error="" if fail_n == 0 else f"{fail_n} 个失败",
-        )
 
 
 def parse_tool_arguments(raw: str | dict[str, Any] | None) -> dict[str, Any]:

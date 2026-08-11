@@ -9,6 +9,7 @@ import ChatInput from './components/ChatInput.vue'
 import ConversationManagerWorkspace from './components/ConversationManagerWorkspace.vue'
 import EmotionWorkspace from './components/EmotionWorkspace.vue'
 import CrawlerWorkspace from './components/CrawlerWorkspace.vue'
+import ExtensionsWorkspace from './components/ExtensionsWorkspace.vue'
 import ExecutorWorkspace from './components/ExecutorWorkspace.vue'
 import EnvWorkspace from './components/EnvWorkspace.vue'
 import LlmConfigWorkspace from './components/LlmConfigWorkspace.vue'
@@ -444,6 +445,14 @@ onUnmounted(() => {
         :agent="selectedAgent"
         @error="onWorkspaceError"
         @message="upsertMessage"
+      />
+
+      <ExtensionsWorkspace
+        v-else-if="selectedAgentId === 'extensions'"
+        :loading="loading"
+        :agent="selectedAgent"
+        @error="onWorkspaceError"
+        @changed="refreshExtensionAgents"
       />
 
       <LlmConfigWorkspace

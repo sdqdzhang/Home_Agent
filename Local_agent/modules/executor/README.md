@@ -25,7 +25,7 @@ HomeAgent **行动层**：将明确动作落地处理，不负责规划、决策
 | mode | 说明 | 安检 | LLM 槽位 |
 |------|------|------|----------|
 | `command` | shell.run | 是 | `executor.parse` |
-| `read_file` / `write_file` / `delete_file` | 文件读写删 | 是 | `executor.parse` |
+| `read_file` / `write_file` / `delete_file` | 文件读写删（读写均可选 `start_line`/`end_line` 行范围） | 是 | `executor.parse` |
 | `browse_dir` / `search_file` / `search_content` | 目录浏览 / 搜文件 / 搜内容 | 是 | `executor.parse` |
 
 路由本身使用槽位 `executor.route`：专用文件能力仅在意图明确时选用，**其余一律兜底到 `command`（Shell）**。
@@ -33,9 +33,9 @@ HomeAgent **行动层**：将明确动作落地处理，不负责规划、决策
 ### write_file — 附件
 
 - 正文来源优先级：`file_content`（附件）→ Markdown 代码块 → LLM `content`
-- 附件正文不进 LLM；有附件时模型只解析目标路径
+- 附件正文不进 LLM；有附件时模型只解析目标路径（及可选行范围）
 - 有附件却未判定为 `write_file`（含用 shell 写文件）→ 错误
-
+- 可选 `start_line`/`end_line`（1-based 闭区间）：只替换该区间与文件行数的交集；起始行超过文件末尾则在末尾追加；未指定则整文件覆盖
 ## 核心流程
 
 ```

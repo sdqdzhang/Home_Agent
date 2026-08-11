@@ -30,7 +30,13 @@ def read_file_system() -> str:
     return f"""你是 HomeAgent 执行模块的「读取文件」解析器。
 把明确动作转为 JSON：{{"ok": true, "type": "file.read", "path": "...", "encoding": "utf-8"}}
 
-{_json_rules('{"ok": true, "type": "file.read", "path": "绝对或相对路径", "encoding": "utf-8"}')}"""
+可选行范围（1-based 闭区间，按需输出）：
+- 「读 xxx 的 1-500 行」→ 加 "start_line": 1, "end_line": 500
+- 「从第 100 行读到结尾」→ 只加 "start_line": 100
+- 「读前 50 行」→ 只加 "end_line": 50
+- 未提行号 → 不要输出 start_line / end_line（整文件）
+
+{_json_rules('{"ok": true, "type": "file.read", "path": "绝对或相对路径", "encoding": "utf-8", "start_line": 1, "end_line": 500}')}"""
 
 
 def read_file_user(action_text: str, **_kwargs) -> str:
@@ -43,16 +49,21 @@ def write_file_system(*, has_attached_body: bool = False, **_kwargs) -> str:
         attached_rule = """
 ## 重要：已附带文件正文
 - 用户已通过侧栏/附件/代码块提供正文，正文**由系统注入**，不会出现在本对话里
-- 你**必须**输出可执行 JSON（ok=true），只解析 path（及 encoding）
+- 你**必须**输出可执行 JSON（ok=true），只解析 path（及 encoding、可选行范围）
 - **禁止**以「缺少正文」「需要附带文件正文」「没有 content」等理由返回 ok=false
 """
     return f"""你是 HomeAgent 执行模块的「写入文件」解析器。
 把明确动作转为 JSON：{{"ok": true, "type": "file.write", "path": "...", "encoding": "utf-8"}}
 
-- 你只解析 path（及 encoding）；正文由系统从侧栏/附件/代码块注入，**禁止输出 content**
+- 你只解析 path（及 encoding、可选行范围）；正文由系统从侧栏/附件/代码块注入，**禁止输出 content**
 - 新建空文件：仅当用户明确要空文件且**未**附带正文时，只输出 path
+- 可选行范围（1-based 闭区间，按需输出）：指定后只替换该区间内的行，其余行保留
+  - 「修改 xxx 的第 10-20 行」→ 加 "start_line": 10, "end_line": 20
+  - 「从第 5 行改到结尾」→ 只加 "start_line": 5
+  - 「替换前 3 行」→ 只加 "end_line": 3
+  - 未提行号 → 不要输出 start_line / end_line（整文件覆盖写入）
 {attached_rule}
-{_json_rules('{"ok": true, "type": "file.write", "path": "...", "encoding": "utf-8"}')}"""
+{_json_rules('{"ok": true, "type": "file.write", "path": "...", "encoding": "utf-8", "start_line": 10, "end_line": 20}')}"""
 
 
 def write_file_user(action_text: str, *, has_attached_body: bool = False, **_kwargs) -> str:
@@ -60,7 +71,7 @@ def write_file_user(action_text: str, *, has_attached_body: bool = False, **_kwa
     if has_attached_body:
         parts.append(
             "【已附带文件正文】用户侧栏/附件或 ``` 代码块已提供正文（内容不在此重复）。"
-            "请只解析写入路径 path；禁止因缺少正文而返回 ok=false。"
+            "请只解析写入路径 path（及可选 start_line/end_line）；禁止因缺少正文而返回 ok=false。"
         )
     parts.append(_env_block())
     parts.append(f"写入文件：\n{action_text.strip()}")

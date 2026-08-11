@@ -125,6 +125,15 @@ export const AGENTS = [
     defaultMsgTypes: ['datablock', 'text'],
   },
   {
+    id: 'extensions',
+    label: '扩展管理',
+    names: ['扩展管理', 'extensions', 'extension_manager'],
+    defaultMood: '就绪',
+    icon: '⧉',
+    description: '安装 / 卸载本地扩展（.hamod）；列表与 Local Agent 安装态同步',
+    defaultMsgTypes: [],
+  },
+  {
     id: 'llm',
     label: '模型配置',
     names: ['本地Agent', 'local_agent', 'llm'],

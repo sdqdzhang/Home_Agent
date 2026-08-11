@@ -1,0 +1,131 @@
+# 网页爬取扩展（契约 v1）
+# 权威字段：docs/extension-contract.md
+
+api_version: 1
+
+id: crawler
+name: 网页爬取模块
+aliases:
+  - crawler
+  - 网页爬取模块
+version: "0.1.1"
+description: 网页抓取（主对话扩展工具）；过滤预览，可将正文保存为文件
+tier: extension
+
+entry:
+  capability: capability
+
+provides:
+  methods:
+    - submit_crawl
+    - submit_crawl_batch
+
+provides_tools: true
+
+llm_slots:
+  - key: crawler.pipeline
+    capability: chat
+    label: 爬取管道
+    description: 爬取判断、调参、过滤器择优等
+  - key: crawler.chat
+    capability: chat
+    label: 爬取对话
+    description: 爬虫模块用户对话
+
+# 扩展管理页「配置」；模型仍在模型配置页
+settings:
+  - key: request_timeout
+    type: number
+    label: 请求超时（秒）
+    description: HTTP / 抓取等待上限
+    default: 30
+    min: 5
+    max: 300
+    step: 1
+    group: 请求
+
+  - key: max_retries
+    type: integer
+    label: 最大重试次数
+    default: 3
+    min: 0
+    max: 10
+    group: 请求
+
+  - key: verify_ssl
+    type: boolean
+    label: 校验 SSL 证书
+    description: 内网自签证书可关闭
+    default: true
+    group: 请求
+
+  - key: user_agent
+    type: text
+    label: User-Agent
+    description: 请求头；留默认即可
+    default: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    group: 请求
+
+  - key: http_client
+    type: select
+    label: HTTP 客户端
+    description: auto 优先 curl_cffi 伪装 TLS
+    default: auto
+    options:
+      - { value: auto, label: 自动 }
+      - { value: httpx, label: httpx }
+      - { value: curl_cffi, label: curl_cffi }
+    group: 请求
+
+  - key: playwright_headless
+    type: boolean
+    label: Playwright 无头模式
+    description: 调试可改为有头浏览器
+    default: true
+    group: Playwright
+
+  - key: playwright_timeout_ms
+    type: integer
+    label: Playwright 超时（毫秒）
+    default: 30000
+    min: 5000
+    max: 180000
+    step: 1000
+    group: Playwright
+
+  - key: save_debug_html
+    type: boolean
+    label: 保存调试 HTML
+    description: 失败/诊断时写入 artifacts，占磁盘
+    default: true
+    group: 存储
+
+requires:
+  python: ">=3.11"
+  packages:
+    - httpx
+    - beautifulsoup4
+  modules: []
+
+post_install: []
+
+permissions:
+  - network
+  - fs_data
+
+ui:
+  label: 网页爬取
+  icon: "◍"
+  default_msg_types:
+    - execution_log
+  workspace: host
+
+http:
+  router: router:router
+
+ws:
+  channels: auto
+  on_message: handle_incoming_message
+  on_connect: catch_up_pending_crawls
+
+default_msg_type: execution_log

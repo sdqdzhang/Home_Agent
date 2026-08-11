@@ -46,7 +46,7 @@ class StorageFile:
 
 def _load_groups() -> list[StorageGroup]:
     from app.config import settings as app_settings
-    from modules.crawler.config import crawler_settings
+    from extension_packages.crawler.config import crawler_settings
     from modules.env.config import env_settings
     from modules.executor.config import executor_settings
     from modules.memory.config import memory_settings

@@ -36,7 +36,6 @@ from modules.conversation_manager.service import ConversationManagerService
 from modules.emotion import MODULE_ID as EMOTION_ID
 from modules.emotion.service import EmotionService
 from modules.terminal.bridge import TerminalBridge
-from modules.crawler.router import router as crawler_router
 from shared.extensions.installer import ensure_default_bundled
 from shared.extensions.loader import LoaderHost, load_all_enabled, set_host
 from shared.extensions.registry import list_loaded_ids
@@ -136,6 +135,10 @@ def _dedupe_ws_handler(handler, *, ttl_seconds: float = 120):
     return wrapped
 
 
+def _mount_extension_router(router) -> None:
+    app.include_router(router)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     global crawler_service, env_service, rag_service, security_service, memory_service, executor_service, processor_service, planning_service, main_service, conversation_manager_service, emotion_service, llm_config_service, terminal_bridge, _ws_listeners
@@ -154,6 +157,7 @@ async def lifespan(_: FastAPI):
             register_client=_register_module_client,
             start_ws=_start_ws_listeners,
             dedupe_handler=_dedupe_ws_handler,
+            mount_router=_mount_extension_router,
             ws_by_module={},
         )
     )
@@ -225,7 +229,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.include_router(crawler_router)
 app.include_router(env_router)
 app.include_router(rag_router)
 app.include_router(security_router)

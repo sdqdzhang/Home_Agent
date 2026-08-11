@@ -30,6 +30,15 @@ const imageSrc = (msg) => {
         :alt="msg.msg_type === 'camera_capture' ? '摄像头拍照' : '远程桌面截图'"
         class="max-h-[70vh] w-full object-contain bg-black"
       />
+      <p
+        v-else-if="msg.message?.status === 'error' || msg.message?.ok === false"
+        class="p-4 text-center text-sm text-rose-300"
+      >
+        {{ msg.message?.text || msg.message?.error || '拍照失败' }}
+      </p>
+      <p v-else-if="msg.message?.status === 'running'" class="p-4 text-center text-sm text-slate-500">
+        {{ msg.message?.text || '处理中…' }}
+      </p>
       <p v-else class="p-4 text-center text-sm text-slate-500">截图数据不可用</p>
     </div>
   </div>

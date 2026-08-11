@@ -58,14 +58,40 @@ TOOLS: list[ToolSpec] = [
 
 
 def create_service(*, server_client: Any, manifest: ExtensionManifest) -> Any:
-    from modules.crawler.service import CrawlerService
+    from service import CrawlerService
 
     _ = manifest
     return CrawlerService(server_client=server_client)
 
 
+async def invoke_tool(
+    service: Any,
+    name: str,
+    arguments: dict[str, Any],
+    *,
+    request_id: str = "",
+    ctx: Any = None,
+) -> Any:
+    from main_tools import invoke_tool as _invoke_tool
+
+    return await _invoke_tool(service, name, arguments, request_id=request_id, ctx=ctx)
+
+
 async def on_loaded(service: Any, *, ctx: Any) -> None:
     _ = service, ctx
+    try:
+        from config import reload_extension_settings
+
+        reload_extension_settings()
+    except Exception:
+        pass
+
+
+async def on_settings_changed(service: Any, values: dict[str, Any]) -> None:
+    _ = service
+    from config import apply_extension_settings
+
+    apply_extension_settings(values)
 
 
 async def on_unload(service: Any, *, ctx: Any) -> None:

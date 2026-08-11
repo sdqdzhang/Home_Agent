@@ -12,6 +12,68 @@ export async function fetchExtensions() {
   return res.json()
 }
 
+export async function installExtension(file) {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch('/api/v1/extensions/install', { method: 'POST', body: form })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || `安装失败: ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function uninstallExtension(moduleId, options = {}) {
+  const res = await fetch(`/api/v1/extensions/${encodeURIComponent(moduleId)}/uninstall`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      purge_code: options.purgeCode !== false,
+      purge_data: Boolean(options.purgeData),
+      purge_deps: Boolean(options.purgeDeps),
+      purge_slots: options.purgeSlots !== false,
+    }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || `卸载失败: ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function fetchExtensionSettings(moduleId) {
+  const res = await fetch(`/api/v1/extensions/${encodeURIComponent(moduleId)}/settings`)
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || `加载配置失败: ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function saveExtensionSettings(moduleId, values) {
+  const res = await fetch(`/api/v1/extensions/${encodeURIComponent(moduleId)}/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ values }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || `保存配置失败: ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function resetExtensionSettings(moduleId) {
+  const res = await fetch(`/api/v1/extensions/${encodeURIComponent(moduleId)}/settings/reset`, {
+    method: 'POST',
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || `重置配置失败: ${res.status}`)
+  }
+  return res.json()
+}
+
 export async function fetchHealth() {
   const res = await fetch('/health')
   if (!res.ok) throw new Error('health check failed')

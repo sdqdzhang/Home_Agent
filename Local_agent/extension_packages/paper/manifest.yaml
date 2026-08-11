@@ -1,0 +1,212 @@
+api_version: 1
+
+id: paper
+name: 论文工具模块
+aliases:
+  - paper
+  - scholarly
+  - 论文工具模块
+version: "0.2.1"
+description: 无需用户申请 API Key 的论文搜索、元数据、开放访问查找、下载与引用关系工具
+tier: extension
+
+entry:
+  capability: capability
+
+provides:
+  methods:
+    - search_papers
+    - get_paper
+    - find_paper
+    - download_paper
+    - get_citations
+
+provides_tools: true
+
+llm_slots:
+  - key: paper.chat
+    capability: chat
+    label: 论文工具对话
+    description: 论文检索、元数据理解与引用关系分析
+
+settings:
+  - key: contact_email
+    type: string
+    label: 联系邮箱
+    description: 可选；用于 Unpaywall、Crossref polite pool 和 NCBI tool/email 参数。为空时跳过 Unpaywall。
+    default: ""
+    group: 全局
+
+  - key: request_timeout
+    type: number
+    label: 请求超时（秒）
+    default: 20
+    min: 3
+    max: 120
+    step: 1
+    group: 全局
+
+  - key: max_retries
+    type: integer
+    label: 最大重试次数
+    default: 2
+    min: 0
+    max: 6
+    group: 全局
+
+  - key: cache_ttl_hours
+    type: number
+    label: 缓存时间（小时）
+    default: 24
+    min: 0
+    max: 720
+    step: 1
+    group: 全局
+
+  - key: max_results_default
+    type: integer
+    label: 默认结果数
+    default: 10
+    min: 1
+    max: 50
+    group: 全局
+
+  - key: max_results_hard_limit
+    type: integer
+    label: 最大结果数
+    default: 25
+    min: 1
+    max: 100
+    group: 全局
+
+  - key: download_dir
+    type: string
+    label: PDF 下载目录
+    description: 相对 Local_agent 根目录或绝对路径
+    default: data/paper/papers
+    group: 全局
+
+  - key: user_agent
+    type: string
+    label: User-Agent
+    default: "HomeAgentPaper/0.1"
+    group: 全局
+
+  - key: search_papers_enabled
+    type: boolean
+    label: 启用搜索论文
+    default: true
+    group: search_papers
+
+  - key: search_papers_expose_to_main
+    type: boolean
+    label: 暴露 search_papers 给主对话
+    default: true
+    group: search_papers
+
+  - key: search_papers_providers
+    type: text
+    label: 搜索 Provider 优先级
+    description: 逗号分隔，支持 semantic_scholar, arxiv, crossref, europe_pmc, pubmed
+    default: semantic_scholar,arxiv,crossref,europe_pmc,pubmed
+    group: search_papers
+
+  - key: get_paper_enabled
+    type: boolean
+    label: 启用获取论文信息
+    default: true
+    group: get_paper
+
+  - key: get_paper_expose_to_main
+    type: boolean
+    label: 暴露 get_paper 给主对话
+    default: true
+    group: get_paper
+
+  - key: get_paper_providers
+    type: text
+    label: 论文信息 Provider 优先级
+    description: 逗号分隔，支持 semantic_scholar, crossref, arxiv, europe_pmc, pubmed
+    default: semantic_scholar,crossref,arxiv,europe_pmc,pubmed
+    group: get_paper
+
+  - key: find_paper_enabled
+    type: boolean
+    label: 启用查找开放版本
+    default: true
+    group: find_paper
+
+  - key: find_paper_expose_to_main
+    type: boolean
+    label: 暴露 find_paper 给主对话
+    default: true
+    group: find_paper
+
+  - key: find_paper_providers
+    type: text
+    label: 开放版本 Provider 优先级
+    description: 逗号分隔，支持 unpaywall, semantic_scholar, arxiv, europe_pmc
+    default: unpaywall,semantic_scholar,arxiv,europe_pmc
+    group: find_paper
+
+  - key: download_paper_enabled
+    type: boolean
+    label: 启用下载论文
+    default: true
+    group: download_paper
+
+  - key: download_paper_expose_to_main
+    type: boolean
+    label: 暴露 download_paper 给主对话
+    default: true
+    group: download_paper
+
+  - key: download_paper_providers
+    type: text
+    label: 下载 Provider 优先级
+    description: 下载只使用 find_paper 后的合法 PDF URL；此处保留为 find_paper Provider 链
+    default: unpaywall,semantic_scholar,arxiv,europe_pmc
+    group: download_paper
+
+  - key: get_citations_enabled
+    type: boolean
+    label: 启用引用关系
+    default: true
+    group: get_citations
+
+  - key: get_citations_expose_to_main
+    type: boolean
+    label: 暴露 get_citations 给主对话
+    default: true
+    group: get_citations
+
+  - key: get_citations_providers
+    type: text
+    label: 引用 Provider 优先级
+    description: 逗号分隔，支持 semantic_scholar, crossref, europe_pmc, pubmed
+    default: semantic_scholar,crossref,europe_pmc,pubmed
+    group: get_citations
+
+requires:
+  python: ">=3.11"
+  packages:
+    - httpx
+  modules: []
+
+post_install: []
+
+permissions:
+  - network
+  - fs_data
+
+ui:
+  label: 论文工具
+  icon: "◍"
+  default_msg_types:
+    - execution_log
+  workspace: none
+
+ws:
+  channels: auto
+
+default_msg_type: execution_log

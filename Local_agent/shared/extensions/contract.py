@@ -52,6 +52,38 @@ LlmSlotCapability = Literal["chat", "embed"]
 
 ApplyMode = Literal["reloaded", "restart_required"]
 
+# 扩展配置表单控件类型（通用 UI）
+SettingFieldType = Literal[
+    "string",
+    "text",
+    "number",
+    "integer",
+    "boolean",
+    "secret",
+    "select",
+    "radio",
+    "multiselect",
+    "checkbox_group",
+]
+
+KNOWN_SETTING_FIELD_TYPES: frozenset[str] = frozenset(
+    {
+        "string",
+        "text",
+        "number",
+        "integer",
+        "boolean",
+        "secret",
+        "select",
+        "radio",
+        "multiselect",
+        "checkbox_group",
+    }
+)
+
+SETTINGS_DEFAULTS_FILE = "settings.defaults.yaml"
+SETTINGS_USER_FILE = "settings.json"
+
 
 # ---------------------------------------------------------------------------
 # Manifest
@@ -61,6 +93,31 @@ ApplyMode = Literal["reloaded", "restart_required"]
 @dataclass(frozen=True)
 class ManifestEntry:
     capability: str = "capability"
+
+
+@dataclass(frozen=True)
+class SettingOption:
+    value: str
+    label: str = ""
+
+
+@dataclass(frozen=True)
+class SettingFieldDecl:
+    """扩展可配置项；前端按 type 渲染通用表单。"""
+
+    key: str
+    type: SettingFieldType = "string"
+    label: str = ""
+    description: str = ""
+    default: Any = None
+    required: bool = False
+    placeholder: str = ""
+    min: float | None = None
+    max: float | None = None
+    step: float | None = None
+    options: tuple[SettingOption, ...] = ()
+    # 分组标题（同 group 的字段排在一起）
+    group: str = ""
 
 
 @dataclass(frozen=True)
@@ -125,6 +182,7 @@ class ExtensionManifest:
     provides: ProvidesDecl = field(default_factory=ProvidesDecl)
     provides_tools: bool = True
     llm_slots: tuple[LlmSlotDecl, ...] = ()
+    settings: tuple[SettingFieldDecl, ...] = ()
     requires: RequiresDecl = field(default_factory=RequiresDecl)
     post_install: tuple[PostInstallAction, ...] = ()
     permissions: tuple[str, ...] = ()
@@ -224,6 +282,10 @@ def validate_manifest_id(module_id: str) -> bool:
     if not module_id or not module_id[0].isalpha() or not module_id[0].islower():
         return False
     return all(c.islower() or c.isdigit() or c == "_" for c in module_id)
+
+
+def validate_setting_field_types(fields: tuple[SettingFieldDecl, ...] | list[SettingFieldDecl]) -> list[str]:
+    return [f.type for f in fields if f.type not in KNOWN_SETTING_FIELD_TYPES]
 
 
 def validate_permissions(permissions: tuple[str, ...] | list[str]) -> list[str]:
