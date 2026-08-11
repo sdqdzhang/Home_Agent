@@ -2,13 +2,14 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { AGENTS } from './config/agents.js'
 import { EXECUTOR_MODES } from './config/executorModes.js'
-import { connectWebSocket, fetchChatMessages, fetchHealth, sendMessageLocal, WS_TARGET } from './api/client.js'
+import { connectWebSocket, fetchChatMessages, fetchExtensions, fetchHealth, sendMessageLocal, WS_TARGET } from './api/client.js'
 import AgentSidebar from './components/AgentSidebar.vue'
 import ChatHeader from './components/ChatHeader.vue'
 import ChatInput from './components/ChatInput.vue'
 import ConversationManagerWorkspace from './components/ConversationManagerWorkspace.vue'
 import EmotionWorkspace from './components/EmotionWorkspace.vue'
 import CrawlerWorkspace from './components/CrawlerWorkspace.vue'
+import ExtensionsWorkspace from './components/ExtensionsWorkspace.vue'
 import ExecutorWorkspace from './components/ExecutorWorkspace.vue'
 import EnvWorkspace from './components/EnvWorkspace.vue'
 import LlmConfigWorkspace from './components/LlmConfigWorkspace.vue'
@@ -30,7 +31,7 @@ import {
   sortMessagesAsc,
 } from './utils/messages.js'
 
-const agents = AGENTS
+const agents = ref([...AGENTS])
 const allMessages = ref([])
 const selectedAgentId = ref('main')
 const mobileView = ref('list')
@@ -38,7 +39,7 @@ const loading = ref(true)
 const wsConnected = ref(false)
 const healthy = ref(true)
 const error = ref('')
-const lastReadAt = ref(Object.fromEntries(agents.map((a) => [a.id, 0])))
+const lastReadAt = ref(Object.fromEntries(AGENTS.map((a) => [a.id, 0])))
 const messageListRef = ref(null)
 const executorWorkspaceRef = ref(null)
 
@@ -49,7 +50,7 @@ let wsSockets = []
 let healthTimer = null
 let pollTimer = null
 
-const selectedAgent = computed(() => agents.find((a) => a.id === selectedAgentId.value) || agents[0])
+const selectedAgent = computed(() => agents.value.find((a) => a.id === selectedAgentId.value) || agents.value[0])
 
 const chatMessages = computed(() =>
   prepareChatMessages(
@@ -138,6 +139,24 @@ async function refreshMessagesQuiet() {
   }
 }
 
+async function refreshExtensionAgents() {
+  try {
+    const data = await fetchExtensions()
+    const loaded = new Set(
+      (data.extensions || [])
+        .filter((e) => e.enabled && (e.loaded || e.status === 'ready'))
+        .map((e) => e.id),
+    )
+    agents.value = AGENTS.filter((a) => !a.extension || loaded.has(a.id))
+    if (!agents.value.some((a) => a.id === selectedAgentId.value)) {
+      selectedAgentId.value = 'main'
+    }
+  } catch {
+    // Local 未启动：隐藏扩展入口
+    agents.value = AGENTS.filter((a) => !a.extension)
+  }
+}
+
 async function checkHealth() {
   try {
     await fetchHealth()
@@ -145,6 +164,7 @@ async function checkHealth() {
   } catch {
     healthy.value = false
   }
+  await refreshExtensionAgents()
 }
 
 function handleWsMessage(payload) {
@@ -425,6 +445,14 @@ onUnmounted(() => {
         :agent="selectedAgent"
         @error="onWorkspaceError"
         @message="upsertMessage"
+      />
+
+      <ExtensionsWorkspace
+        v-else-if="selectedAgentId === 'extensions'"
+        :loading="loading"
+        :agent="selectedAgent"
+        @error="onWorkspaceError"
+        @changed="refreshExtensionAgents"
       />
 
       <LlmConfigWorkspace

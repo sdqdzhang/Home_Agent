@@ -1,17 +1,11 @@
-"""Local Agent 模块间通信门面（新模块请经此调用，现有模块行为不变）。
-
-规则见 docs/module-communication.md：
-  - 同步本机调用 → call()
-  - 需 UI / 审批 / 留痕 → push_to_ui()
-"""
+"""Local Agent 进程内服务注册（core 属性 + 扩展动态表）。"""
 
 from __future__ import annotations
 
 from typing import Any
 
-# module_id → app.main 中对应 Service 全局变量名
+# module_id → app.main 中对应 Service 全局变量名（仅 core）
 _SERVICE_ATTRS: dict[str, str] = {
-    "crawler": "crawler_service",
     "env": "env_service",
     "rag": "rag_service",
     "security": "security_service",
@@ -25,16 +19,48 @@ _SERVICE_ATTRS: dict[str, str] = {
     "llm": "llm_config_service",
 }
 
+# 扩展（及可选覆盖）运行时实例
+_DYNAMIC_SERVICES: dict[str, Any] = {}
+
 
 class LocalBusError(RuntimeError):
     pass
 
 
+def register_service(module_id: str, service: Any) -> None:
+    _DYNAMIC_SERVICES[module_id] = service
+
+
+def unregister_service(module_id: str) -> None:
+    _DYNAMIC_SERVICES.pop(module_id, None)
+
+
+def list_registered_module_ids() -> set[str]:
+    ids = set(_DYNAMIC_SERVICES)
+    # core：仅包含已启动的
+    try:
+        from app import main as app_main
+    except Exception:
+        return ids
+    for mid, attr in _SERVICE_ATTRS.items():
+        if getattr(app_main, attr, None) is not None:
+            ids.add(mid)
+    return ids
+
+
 def get_service(module_id: str) -> Any:
     """返回已启动的模块 Service 实例；未注册或未启动时抛 LocalBusError。"""
+    if module_id in _DYNAMIC_SERVICES:
+        service = _DYNAMIC_SERVICES[module_id]
+        if service is None:
+            raise LocalBusError(f"模块 {module_id!r} 尚未启动")
+        return service
+
     attr = _SERVICE_ATTRS.get(module_id)
     if not attr:
-        raise LocalBusError(f"未知模块: {module_id!r}（已注册: {sorted(_SERVICE_ATTRS)}）")
+        raise LocalBusError(
+            f"未知模块: {module_id!r}（已注册: {sorted(set(_SERVICE_ATTRS) | set(_DYNAMIC_SERVICES))}）"
+        )
 
     from app import main as app_main
 

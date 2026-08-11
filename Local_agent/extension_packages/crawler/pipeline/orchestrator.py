@@ -8,7 +8,7 @@ from typing import Any
 
 from modules.crawler.config import crawler_settings
 from modules.crawler.filters import ALL_FILTERS
-from modules.crawler.logging import JobLogger
+from modules.crawler.crawl_logging import JobLogger
 from modules.crawler.model import CrawlerAssistant
 from modules.crawler.storage import JobStore
 from modules.crawler.strategies import (

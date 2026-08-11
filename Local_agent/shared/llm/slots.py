@@ -33,20 +33,7 @@ SLOT_DEFINITIONS: tuple[SlotDefinition, ...] = (
         capability="embed",
         description="文档入库时的 embedding 模型",
     ),
-    SlotDefinition(
-        slot_key="crawler.pipeline",
-        label="爬虫流水线",
-        module="crawler",
-        capability="chat",
-        description="爬取判断、调参、过滤器择优等",
-    ),
-    SlotDefinition(
-        slot_key="crawler.chat",
-        label="爬虫对话",
-        module="crawler",
-        capability="chat",
-        description="爬虫模块用户对话",
-    ),
+    # crawler.* 由扩展 manifest.llm_slots 动态注册（见 docs/extension-contract.md）
     SlotDefinition(
         slot_key="env.summary",
         label="环境周期总结",
@@ -176,6 +163,37 @@ SLOT_DEFINITIONS: tuple[SlotDefinition, ...] = (
 )
 
 SLOT_BY_KEY: dict[str, SlotDefinition] = {item.slot_key: item for item in SLOT_DEFINITIONS}
+
+# 扩展动态槽（module_id → keys）；与 core 合并后对配置 UI / is_valid_slot 可见
+_DYNAMIC_SLOTS: dict[str, SlotDefinition] = {}
+_DYNAMIC_BY_MODULE: dict[str, set[str]] = {}
+
+
+def _rebuild_slot_index() -> None:
+    SLOT_BY_KEY.clear()
+    SLOT_BY_KEY.update({item.slot_key: item for item in SLOT_DEFINITIONS})
+    SLOT_BY_KEY.update(_DYNAMIC_SLOTS)
+
+
+def list_all_slot_definitions() -> list[SlotDefinition]:
+    """core 静态槽 ∪ 动态扩展槽（按 slot_key 去重，动态覆盖同名）。"""
+    merged = {item.slot_key: item for item in SLOT_DEFINITIONS}
+    merged.update(_DYNAMIC_SLOTS)
+    return list(merged.values())
+
+
+def register_dynamic_slots(slots: list[SlotDefinition]) -> None:
+    for slot in slots:
+        _DYNAMIC_SLOTS[slot.slot_key] = slot
+        _DYNAMIC_BY_MODULE.setdefault(slot.module, set()).add(slot.slot_key)
+    _rebuild_slot_index()
+
+
+def unregister_dynamic_slots_for_module(module_id: str) -> None:
+    keys = _DYNAMIC_BY_MODULE.pop(module_id, set())
+    for key in keys:
+        _DYNAMIC_SLOTS.pop(key, None)
+    _rebuild_slot_index()
 
 
 def is_valid_slot(slot_key: str) -> bool:

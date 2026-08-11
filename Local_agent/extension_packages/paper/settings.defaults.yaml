@@ -1,0 +1,31 @@
+# 包内默认配置
+# 优先级：schema.default ← 本文件 ← data/paper/settings.json（用户）
+
+contact_email: ""
+request_timeout: 20
+max_retries: 2
+cache_ttl_hours: 24
+max_results_default: 10
+max_results_hard_limit: 25
+download_dir: data/paper/papers
+user_agent: "HomeAgentPaper/0.1"
+
+search_papers_enabled: true
+search_papers_expose_to_main: true
+search_papers_providers: semantic_scholar,arxiv,crossref,europe_pmc,pubmed
+
+get_paper_enabled: true
+get_paper_expose_to_main: true
+get_paper_providers: semantic_scholar,crossref,arxiv,europe_pmc,pubmed
+
+find_paper_enabled: true
+find_paper_expose_to_main: true
+find_paper_providers: unpaywall,semantic_scholar,arxiv,europe_pmc
+
+download_paper_enabled: true
+download_paper_expose_to_main: true
+download_paper_providers: unpaywall,semantic_scholar,arxiv,europe_pmc
+
+get_citations_enabled: true
+get_citations_expose_to_main: true
+get_citations_providers: semantic_scholar,crossref,europe_pmc,pubmed

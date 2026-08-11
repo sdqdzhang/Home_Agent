@@ -209,11 +209,74 @@ async def run_file_read(action: FileReadAction, *, on_line: Callable[[str], None
         duration_ms = int((time.perf_counter() - started) * 1000)
         return RunOutput(exit_code=1, stdout="", stderr=f"文件不存在: {path}", duration_ms=duration_ms)
 
-    content = path.read_text(encoding=action.encoding, errors="replace")
+    has_range = action.start_line is not None or action.end_line is not None
+    if not has_range:
+        content = path.read_text(encoding=action.encoding, errors="replace")
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        if on_line:
+            on_line(f"read {len(content)} chars")
+        return RunOutput(exit_code=0, stdout=content, stderr="", duration_ms=duration_ms, files_touched=[str(path)])
+
+    start_y = action.start_line if action.start_line is not None else 1
+    end_z = action.end_line  # None → EOF
+    selected: list[str] = []
+    total_lines = 0
+    with path.open("r", encoding=action.encoding, errors="replace", newline="") as fh:
+        for line_no, line in enumerate(fh, start=1):
+            if end_z is not None and line_no > end_z:
+                break
+            total_lines = line_no
+            if line_no < start_y:
+                continue
+            selected.append(line.rstrip("\r\n"))
+
+    content = "\n".join(selected)
     duration_ms = int((time.perf_counter() - started) * 1000)
     if on_line:
-        on_line(f"read {len(content)} chars")
+        if not selected:
+            on_line(f"read lines (empty intersection; file has {total_lines} lines)")
+        else:
+            actual_start = start_y
+            actual_end = start_y + len(selected) - 1
+            on_line(f"read lines {actual_start}-{actual_end} of {total_lines} ({len(content)} chars)")
     return RunOutput(exit_code=0, stdout=content, stderr="", duration_ms=duration_ms, files_touched=[str(path)])
+
+
+def _apply_line_range_write(existing: str, replacement: str, *, start_line: int | None, end_line: int | None) -> tuple[str, str]:
+    """Replace lines in [start_line, end_line] ∩ [1, X] with replacement lines.
+
+    Returns (new_text, log_detail).
+    Empty intersection (start > X): append replacement after existing lines.
+    """
+    lines = existing.splitlines()
+    total = len(lines)
+    start_y = start_line if start_line is not None else 1
+    end_z = end_line if end_line is not None else total
+    new_lines = replacement.splitlines() if replacement else []
+
+    if total == 0 or start_y > total:
+        # Empty file or start past EOF → append
+        merged = lines + new_lines
+        text = "\n".join(merged)
+        if merged:
+            text += "\n"
+        detail = f"append after line {total} ({len(new_lines)} new lines; file had {total} lines)"
+        return text, detail
+
+    actual_start = start_y
+    actual_end = min(end_z, total)
+    # 1-based inclusive → slice [actual_start-1 : actual_end]
+    prefix = lines[: actual_start - 1]
+    suffix = lines[actual_end:]
+    merged = prefix + new_lines + suffix
+    text = "\n".join(merged)
+    if merged:
+        text += "\n"
+    detail = (
+        f"replace lines {actual_start}-{actual_end} of {total} "
+        f"with {len(new_lines)} line(s)"
+    )
+    return text, detail
 
 
 async def run_file_write(action: FileWriteAction, *, on_line: Callable[[str], None] | None = None) -> RunOutput:
@@ -224,9 +287,38 @@ async def run_file_write(action: FileWriteAction, *, on_line: Callable[[str], No
 
     path.parent.mkdir(parents=True, exist_ok=True)
     existed = path.exists()
-    path.write_text(action.content if action.content is not None else "", encoding=action.encoding)
+    body = action.content if action.content is not None else ""
+    has_range = action.start_line is not None or action.end_line is not None
+
+    if not has_range:
+        path.write_text(body, encoding=action.encoding)
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        if on_line:
+            on_line(f"{'updated' if existed else 'created'} {path}")
+        return RunOutput(exit_code=0, stdout="", stderr="", duration_ms=duration_ms, files_touched=[str(path)])
+
+    existing = ""
+    if existed and path.is_file():
+        existing = path.read_text(encoding=action.encoding, errors="replace")
+    elif existed and path.is_dir():
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        return RunOutput(
+            exit_code=1,
+            stdout="",
+            stderr=f"目标是目录，无法按行写入: {path}",
+            duration_ms=duration_ms,
+        )
+
+    text, detail = _apply_line_range_write(
+        existing,
+        body,
+        start_line=action.start_line,
+        end_line=action.end_line,
+    )
+    path.write_text(text, encoding=action.encoding)
     duration_ms = int((time.perf_counter() - started) * 1000)
     if on_line:
+        on_line(detail)
         on_line(f"{'updated' if existed else 'created'} {path}")
     return RunOutput(exit_code=0, stdout="", stderr="", duration_ms=duration_ms, files_touched=[str(path)])
 

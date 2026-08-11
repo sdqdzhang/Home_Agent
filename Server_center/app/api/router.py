@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, File, Header, HTTPException, Query, UploadFile
 
 from app.config import settings
 from app.modules import MODULES, module_to_dict, resolve_module
@@ -197,6 +197,133 @@ def terminal_status() -> dict:
         "enabled": sc_settings.terminal_enabled,
         "agent_connected": terminal_relay.agent_connected,
     }
+
+
+@router.get("/extensions")
+async def list_local_extensions() -> dict:
+    """代理 Local Agent 已安装扩展列表。"""
+    import httpx
+
+    url = settings.local_agent_url.rstrip("/") + "/extensions"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            res = await client.get(url)
+            res.raise_for_status()
+            return res.json()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Local Agent 不可用: {exc}") from exc
+
+
+@router.post("/extensions/install")
+async def install_local_extension(file: UploadFile = File(...)) -> dict:
+    """前端上传 .hamod → 转发 Local Agent 同一安装入口。"""
+    import httpx
+
+    raw = await file.read()
+    url = settings.local_agent_url.rstrip("/") + "/extensions/install"
+    try:
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            res = await client.post(url, files={"file": (file.filename or "pkg.hamod", raw)})
+            if res.status_code >= 400:
+                raise HTTPException(status_code=res.status_code, detail=res.text)
+            return res.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"安装失败: {exc}") from exc
+
+
+@router.delete("/extensions/{module_id}")
+async def uninstall_local_extension(
+    module_id: str,
+    purge_data: bool = False,
+    purge_deps: bool = False,
+    purge_slots: bool = True,
+    purge_code: bool = True,
+) -> dict:
+    """卸载扩展；默认 purge_code=true 删除已安装代码。"""
+    import httpx
+
+    url = settings.local_agent_url.rstrip("/") + f"/extensions/{module_id}/uninstall"
+    payload = {
+        "purge_data": purge_data,
+        "purge_deps": purge_deps,
+        "purge_slots": purge_slots,
+        "purge_code": purge_code,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            res = await client.post(url, json=payload)
+            if res.status_code >= 400:
+                raise HTTPException(status_code=res.status_code, detail=res.text)
+            return res.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"卸载失败: {exc}") from exc
+
+
+@router.post("/extensions/{module_id}/uninstall")
+async def uninstall_local_extension_post(module_id: str, body: dict | None = None) -> dict:
+    body = body or {}
+    return await uninstall_local_extension(
+        module_id,
+        purge_data=bool(body.get("purge_data", False)),
+        purge_deps=bool(body.get("purge_deps", False)),
+        purge_slots=bool(body.get("purge_slots", True)),
+        purge_code=bool(body.get("purge_code", True)),
+    )
+
+
+@router.get("/extensions/{module_id}/settings")
+async def get_local_extension_settings(module_id: str) -> dict:
+    import httpx
+
+    url = settings.local_agent_url.rstrip("/") + f"/extensions/{module_id}/settings"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            res = await client.get(url)
+            if res.status_code >= 400:
+                raise HTTPException(status_code=res.status_code, detail=res.text)
+            return res.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"读取扩展配置失败: {exc}") from exc
+
+
+@router.put("/extensions/{module_id}/settings")
+async def put_local_extension_settings(module_id: str, body: dict | None = None) -> dict:
+    import httpx
+
+    url = settings.local_agent_url.rstrip("/") + f"/extensions/{module_id}/settings"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            res = await client.put(url, json=body or {"values": {}})
+            if res.status_code >= 400:
+                raise HTTPException(status_code=res.status_code, detail=res.text)
+            return res.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"保存扩展配置失败: {exc}") from exc
+
+
+@router.post("/extensions/{module_id}/settings/reset")
+async def reset_local_extension_settings(module_id: str) -> dict:
+    import httpx
+
+    url = settings.local_agent_url.rstrip("/") + f"/extensions/{module_id}/settings/reset"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            res = await client.post(url)
+            if res.status_code >= 400:
+                raise HTTPException(status_code=res.status_code, detail=res.text)
+            return res.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"重置扩展配置失败: {exc}") from exc
 
 
 @router.post("/clients/register")

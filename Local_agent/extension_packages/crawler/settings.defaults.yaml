@@ -1,0 +1,11 @@
+# 包内默认配置（懒得改的用户直接用）
+# 优先级：schema.default ← 本文件 ← data/crawler/settings.json（用户）
+
+request_timeout: 30
+max_retries: 3
+verify_ssl: true
+user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+http_client: auto
+playwright_headless: true
+playwright_timeout_ms: 30000
+save_debug_html: true

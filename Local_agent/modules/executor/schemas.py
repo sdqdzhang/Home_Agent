@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 ExecutorMode = Literal[
     "command",
@@ -50,6 +50,14 @@ class FileReadAction(BaseModel):
     type: Literal["file.read"] = "file.read"
     path: str = Field(..., min_length=1)
     encoding: str = "utf-8"
+    start_line: int | None = Field(default=None, ge=1)
+    end_line: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def validate_line_range(self) -> FileReadAction:
+        if self.start_line is not None and self.end_line is not None and self.start_line > self.end_line:
+            raise ValueError("start_line 不能大于 end_line")
+        return self
 
 
 class FileWriteAction(BaseModel):
@@ -57,6 +65,14 @@ class FileWriteAction(BaseModel):
     path: str = Field(..., min_length=1)
     content: str | None = None
     encoding: str = "utf-8"
+    start_line: int | None = Field(default=None, ge=1)
+    end_line: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def validate_line_range(self) -> FileWriteAction:
+        if self.start_line is not None and self.end_line is not None and self.start_line > self.end_line:
+            raise ValueError("start_line 不能大于 end_line")
+        return self
 
 
 class FileDeleteAction(BaseModel):

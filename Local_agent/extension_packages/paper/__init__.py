@@ -1,0 +1,1 @@
+"""Paper / Scholarly extension package."""

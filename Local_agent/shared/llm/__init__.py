@@ -12,7 +12,7 @@ from shared.llm.errors import (
 from shared.llm.json_parse import try_parse_pipeline
 from shared.llm.registry import ModelRegistry, get_model_registry, reset_model_registry
 from shared.llm.schemas import BindingRecord, EndpointRecord, ResolvedLLMConfig, SlotDefinition
-from shared.llm.slots import DEFAULT_CHAT_SLOT, SLOT_DEFINITIONS, get_slot, is_valid_slot
+from shared.llm.slots import DEFAULT_CHAT_SLOT, SLOT_DEFINITIONS, get_slot, is_valid_slot, list_all_slot_definitions
 from shared.llm.storage import LlmConfigStore
 
 __all__ = [
@@ -31,6 +31,7 @@ __all__ = [
     "SlotDefinition",
     "DEFAULT_CHAT_SLOT",
     "SLOT_DEFINITIONS",
+    "list_all_slot_definitions",
     "get_slot",
     "is_valid_slot",
     "LLMRegistryError",

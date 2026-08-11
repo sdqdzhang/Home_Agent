@@ -98,10 +98,10 @@ class CrawlerTestApp(tk.Tk):
             self.after(0, lambda l=line: self._log(f"    | {l}"))
 
         async def _coro():
-            from modules.crawler.config import crawler_settings
-            from modules.crawler.model import CrawlerAssistant
-            from modules.crawler.pipeline import CrawlOrchestrator
-            from modules.crawler.storage import JobStore
+            from extension_packages.crawler.config import crawler_settings
+            from extension_packages.crawler.model import CrawlerAssistant
+            from extension_packages.crawler.pipeline import CrawlOrchestrator
+            from extension_packages.crawler.storage import JobStore
 
             crawler_settings.data_dir.mkdir(parents=True, exist_ok=True)
             store = JobStore(

@@ -104,22 +104,6 @@ def build_seed_data() -> tuple[list[EndpointRecord], list[BindingRecord]]:
             updated_at=now,
         ),
         BindingRecord(
-            slot_key="crawler.pipeline",
-            endpoint_id=ep_default.id,
-            model_override=None,
-            temperature_override=None,
-            max_tokens_override=None,
-            updated_at=now,
-        ),
-        BindingRecord(
-            slot_key="crawler.chat",
-            endpoint_id=ep_default.id,
-            model_override=None,
-            temperature_override=None,
-            max_tokens_override=None,
-            updated_at=now,
-        ),
-        BindingRecord(
             slot_key="env.summary",
             endpoint_id=ep_default.id,
             model_override=env_model_override,
@@ -382,3 +366,23 @@ def migrate_core_dialog_slots(store: LlmConfigStore) -> None:
             temperature_override=temp if temp is not None else source.temperature_override,
             max_tokens_override=max_tokens or source.max_tokens_override,
         )
+
+
+def ensure_bindings_for_slots(store: LlmConfigStore, slot_keys: list[str]) -> int:
+    """为新注册的扩展槽补默认绑定（沿用 default.chat）。返回新建数量。"""
+    source = store.get_binding("default.chat")
+    if not source:
+        return 0
+    created = 0
+    for key in slot_keys:
+        if store.get_binding(key):
+            continue
+        store.upsert_binding(
+            key,
+            source.endpoint_id,
+            model_override=source.model_override,
+            temperature_override=source.temperature_override,
+            max_tokens_override=source.max_tokens_override,
+        )
+        created += 1
+    return created
