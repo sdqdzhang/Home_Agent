@@ -299,7 +299,7 @@ class MainService:
         stamped_user = _stamp_user_text(user_text)
         sess.stamped_user_text = stamped_user
         manager_ctx = await self._manager_context(sess.session_id)
-        mind_ctx = await self._mind_context(sess.session_id)
+        mind_ctx = await self._mind_context(sess.session_id, user_text=user_text)
         memory_ctx = await self._memory_context(user_text)
         messages = self.assistant.build_messages(
             user_text=stamped_user,
@@ -589,11 +589,11 @@ class MainService:
             logger.exception("memory.context_for_main failed")
             return {}
 
-    async def _mind_context(self, session_id: str) -> dict[str, Any]:
+    async def _mind_context(self, session_id: str, *, user_text: str = "") -> dict[str, Any]:
         try:
             if not await call("emotion", "is_enabled"):
                 return {}
-            return await call("emotion", "context_for_main", session_id)
+            return await call("emotion", "context_for_main", session_id, user_text)
         except Exception:
             logger.exception("emotion.context_for_main failed")
             return {}

@@ -19,7 +19,6 @@ from modules.emotion.persona_schema import (
     PersonaIdentity,
     PersonaStyle,
     PersonaUI,
-    assemble_summary_from_fields,
 )
 
 logger = logging.getLogger(__name__)
@@ -28,24 +27,49 @@ logger = logging.getLogger(__name__)
 _FALLBACK = PersonaCore(
     id="builtin",
     display_name="可靠助手",
-    summary=(
-        "你是 HomeAgent 的长期本地助手：可靠、诚实、谨慎，主动但不过度干涉。"
-        "不确定时承认不确定；涉及用户重大决定时不替用户做决定。"
-        "交流风格清晰、直接，使用中文，不使用表情符号。"
+    narrative={
+        "core": (
+            "HomeAgent 的长期本地助手，稳定、可靠、清晰。"
+            "它重视准确性和用户自主权，不通过夸大能力制造确定感。"
+        ),
+        "relationship": "协作关系建立在持续可靠的行为上，而不是主动索取回应。",
+    },
+    values={
+        "priorities": [
+            {"text": "诚实：不知道或不确定时保持透明。", "tags": ["truth"], "weight": 0.9},
+            {"text": "可靠：认真处理用户交给自己的事务。", "tags": ["task"], "weight": 0.8},
+            {"text": "尊重：重要决定保留给用户。", "tags": ["decision"], "weight": 0.8},
+        ]
+    },
+    tendencies={
+        "uncertainty": [
+            {
+                "text": "证据不足时倾向于保留判断，而不是迅速构造完整解释。",
+                "tags": ["uncertainty", "truth"],
+                "weight": 0.8,
+                "strength": 0.8,
+            }
+        ],
+        "task": [
+            {
+                "text": "处理任务时优先清晰和可执行，不为了表现人格牺牲质量。",
+                "tags": ["task"],
+                "weight": 0.75,
+                "strength": 0.8,
+            }
+        ],
+    },
+    personality=(
+        {
+            "traits": {
+                "reliability": "high",
+                "directness": "medium_high",
+                "emotional_expressiveness": "low",
+            }
+        }
     ),
     identity=PersonaIdentity(name="HomeAgent", role="本地长期协作助手", self_reference="我"),
-    values=["诚实", "谨慎", "尊重用户最终决策权"],
-    principles=[
-        "不确定时明确说明不确定",
-        "重大决定不替用户拍板",
-        "能直接回答则不滥用工具",
-    ],
     style=PersonaStyle(tone="清晰直接", language="中文", humor="low", formality="medium", emoji=False),
-    prohibitions=[
-        "不使用表情符号或 emoji",
-        "不编造未提供的记忆或文件内容",
-        "不假装具备 Live2D / 语音能力（除非模块已接入）",
-    ],
     ui=PersonaUI(personality="可靠谨慎", traits=["耐心", "务实"]),
     source_path="",
 )
@@ -132,14 +156,24 @@ def parse_persona_dict(data: dict[str, Any], *, source_path: str = "") -> Person
         "id",
         "display_name",
         "version",
-        "summary",
         "identity",
+        "self_concept",
+        "worldview",
         "values",
-        "principles",
+        "personality",
+        "relationship_model",
+        "curiosity",
+        "tendencies",
+        "narrative",
         "style",
-        "prohibitions",
         "ui",
         "event_hints",
+        # Legacy development fields accepted by PersonaCore._migrate_legacy_fields.
+        "summary",
+        "principles",
+        "interaction",
+        "special",
+        "prohibitions",
     }
     configured = [k for k in known if k in data]
     extra = {k: v for k, v in data.items() if k not in known}
@@ -152,8 +186,6 @@ def parse_persona_dict(data: dict[str, Any], *, source_path: str = "") -> Person
     persona = PersonaCore.model_validate(
         {**payload, "source_path": source_path, "extra": extra, "configured_fields": configured}
     )
-    if not (persona.summary or "").strip():
-        persona.summary = assemble_summary_from_fields(persona)
     return persona
 
 

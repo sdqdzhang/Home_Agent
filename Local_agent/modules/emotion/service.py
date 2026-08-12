@@ -16,7 +16,11 @@ from modules.emotion.config import (
     load_enabled_override,
     save_enabled_override,
 )
-from modules.emotion.context import build_display_labels, build_mind_context
+from modules.emotion.context import (
+    build_display_labels,
+    build_mind_context,
+    resolver_debug_for_context,
+)
 from modules.emotion.continuity import (
     apply_emotion_delta,
     apply_familiarity_delta,
@@ -114,6 +118,7 @@ class _SessionRuntime:
         self.last_topic = ""
         self.last_project = ""
         self.cached_context = ""
+        self.resolver_debug: list[dict[str, Any]] = []
 
 
 class EmotionService:
@@ -178,7 +183,7 @@ class EmotionService:
     def get_snapshot(self, session_id: str = "default") -> MindSnapshot:
         return self._build_snapshot(self._session(session_id))
 
-    def context_for_main(self, session_id: str = "default") -> dict[str, Any]:
+    def context_for_main(self, session_id: str = "default", user_text: str = "") -> dict[str, Any]:
         if not self.is_enabled():
             return {
                 "enabled": False,
@@ -197,8 +202,10 @@ class EmotionService:
             persona=persona,
             conversation_topic=topic,
             conversation_project=project,
+            user_text=user_text,
         )
         rt.cached_context = text
+        rt.resolver_debug = resolver_debug_for_context(rt.state, persona=persona, user_text=user_text)
         return {
             "enabled": True,
             "mind_context": text,
@@ -206,6 +213,7 @@ class EmotionService:
             "persona_id": persona.id,
             "persona_display_name": persona.display_name,
             "display": build_display_labels(rt.state),
+            "resolver_debug": list(rt.resolver_debug),
         }
 
     def _apply_turn_state(
@@ -436,6 +444,10 @@ class EmotionService:
             persona=persona,
             conversation_topic=topic,
             conversation_project=project,
+            user_text=event.user_text,
+        )
+        rt.resolver_debug = resolver_debug_for_context(
+            rt.state, persona=persona, user_text=event.user_text
         )
         snap = self._build_snapshot(rt)
         if sc is not None:
@@ -571,6 +583,7 @@ class EmotionService:
         payload["persona"] = self.persona_display()
         payload["available_personas"] = self.list_personas()
         payload["active_spec"] = self.personas.active_spec
+        payload["resolver_debug"] = list(rt.resolver_debug)
         if change is not None:
             payload["last_change"] = change.model_dump()
         if request_id:
