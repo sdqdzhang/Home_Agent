@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
-from modules.crawler.strategies.diagnose import detect_block_signals
+from .diagnose import detect_block_signals
 
 RSS_HINTS = ("/feed", "/rss", "/atom", ".xml", "feed.xml", "rss.xml")
 DYNAMIC_HINTS = ("spa", "react", "vue", "angular", "#/")

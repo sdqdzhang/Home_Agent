@@ -101,7 +101,7 @@ async def list_artifacts() -> dict[str, list[str]]:
 @router.get("/artifacts/{filename}")
 async def read_artifact(filename: str) -> dict[str, str]:
     service = _get_service()
-    from modules.crawler.config import crawler_settings
+    from .config import crawler_settings
 
     path = crawler_settings.artifacts_dir / filename
     if not path.is_file():
@@ -112,7 +112,7 @@ async def read_artifact(filename: str) -> dict[str, str]:
 @router.get("/texts")
 async def list_texts() -> dict[str, Any]:
     service = _get_service()
-    from modules.crawler.config import crawler_settings
+    from .config import crawler_settings
 
     return {"files": service.store.list_text_exports(), "texts_dir": str(crawler_settings.texts_dir)}
 
@@ -120,7 +120,7 @@ async def list_texts() -> dict[str, Any]:
 @router.get("/texts/{filename}")
 async def read_text(filename: str) -> dict[str, str]:
     service = _get_service()
-    from modules.crawler.config import crawler_settings
+    from .config import crawler_settings
 
     # 禁止路径穿越
     if "/" in filename or "\\" in filename or filename in (".", ".."):

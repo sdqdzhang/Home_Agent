@@ -160,6 +160,13 @@ SLOT_DEFINITIONS: tuple[SlotDefinition, ...] = (
         capability="chat",
         description="规则触发后更新情绪/氛围/行为倾向（Mind Analyzer）",
     ),
+    SlotDefinition(
+        slot_key="mind.advisor",
+        label="心智回应指导",
+        module="emotion",
+        capability="chat",
+        description="轮前根据 Persona Core / Mind State 生成结构化回应策略（Mind Advisor）",
+    ),
 )
 
 SLOT_BY_KEY: dict[str, SlotDefinition] = {item.slot_key: item for item in SLOT_DEFINITIONS}

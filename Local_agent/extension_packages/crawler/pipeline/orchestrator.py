@@ -6,12 +6,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from modules.crawler.config import crawler_settings
-from modules.crawler.filters import ALL_FILTERS
-from modules.crawler.crawl_logging import JobLogger
-from modules.crawler.model import CrawlerAssistant
-from modules.crawler.storage import JobStore
-from modules.crawler.strategies import (
+from ..config import crawler_settings
+from ..filters import ALL_FILTERS
+from ..crawl_logging import JobLogger
+from ..model import CrawlerAssistant
+from ..storage import JobStore
+from ..strategies import (
     CrawlResult,
     classify_url,
     crawl_feed,
@@ -19,8 +19,8 @@ from modules.crawler.strategies import (
     crawl_playwright,
     fallback_order,
 )
-from modules.crawler.strategies.diagnose import save_debug_html
-from modules.crawler.strategies.router import classify_response
+from ..strategies.diagnose import save_debug_html
+from ..strategies.router import classify_response
 
 logger = logging.getLogger(__name__)
 

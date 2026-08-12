@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from modules.crawler.strategies.base import CrawlResult
+from .base import CrawlResult
 
 # HTML/标题中的硬拦截特征（会判定失败）
 _HARD_BLOCK_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (

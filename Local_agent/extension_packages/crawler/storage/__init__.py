@@ -1,3 +1,3 @@
-from modules.crawler.storage.jobs import JobStore
+from .jobs import JobStore
 
 __all__ = ["JobStore"]

@@ -38,6 +38,28 @@ const activeSpec = computed(
 const enabled = computed(() => snapshot.value?.enabled === true)
 
 const summaryLines = computed(() => personaSummaryLines(persona.value))
+const valuePriorities = computed(() => {
+  const values = persona.value?.values
+  if (Array.isArray(values)) return values
+  return Array.isArray(values?.priorities) ? values.priorities : []
+})
+const valueConflicts = computed(() => {
+  const values = persona.value?.values
+  return Array.isArray(values?.conflicts) ? values.conflicts : []
+})
+const worldviewSections = computed(() => Object.entries(persona.value?.worldview || {}))
+const tendencyGroups = computed(() => Object.entries(persona.value?.tendencies || {}))
+const legacyPolicyNotes = computed(() =>
+  Array.isArray(persona.value?.extra?.legacy_policy_notes) ? persona.value.extra.legacy_policy_notes : [],
+)
+const resolverDebug = computed(() =>
+  Array.isArray(snapshot.value?.resolver_debug) ? snapshot.value.resolver_debug : [],
+)
+const advisorDebug = computed(() =>
+  snapshot.value?.advisor_debug && typeof snapshot.value.advisor_debug === 'object'
+    ? snapshot.value.advisor_debug
+    : null,
+)
 
 const emotion = computed(() => mindState.value?.emotion || null)
 const relationship = computed(() => mindState.value?.relationship || null)
@@ -81,6 +103,21 @@ function preview(text, limit = 140) {
   const one = String(text || '').replace(/\n/g, ' ').trim()
   if (!one) return '—'
   return one.length > limit ? `${one.slice(0, limit)}…` : one
+}
+
+function unitText(unit) {
+  if (typeof unit === 'string') return unit
+  return String(unit?.text || unit?.summary || '').trim()
+}
+
+function unitMeta(unit) {
+  if (!unit || typeof unit !== 'object') return ''
+  const bits = []
+  if (unit.visibility) bits.push(unit.visibility)
+  if (typeof unit.weight === 'number') bits.push(`w=${unit.weight.toFixed(2)}`)
+  if (typeof unit.strength === 'number') bits.push(`s=${unit.strength.toFixed(2)}`)
+  if (Array.isArray(unit.tags) && unit.tags.length) bits.push(unit.tags.join(','))
+  return bits.join(' · ')
 }
 
 async function run(action, extra = {}) {
@@ -245,7 +282,7 @@ onMounted(() => {
           </div>
 
           <div class="mb-3">
-            <p class="mb-1 text-[11px] uppercase tracking-wide text-zinc-500">人格摘要（注入主对话 · 整理后）</p>
+            <p class="mb-1 text-[11px] uppercase tracking-wide text-zinc-500">人格摘要（整理视图，不等于每轮注入）</p>
             <div class="space-y-1 rounded bg-zinc-950/70 px-3 py-2 text-xs leading-relaxed text-zinc-300">
               <p v-for="(line, i) in summaryLines" :key="i">{{ line }}</p>
               <p v-if="!summaryLines.length" class="text-zinc-600">—</p>
@@ -256,7 +293,7 @@ onMounted(() => {
             v-if="persona && persona.structured_from_file === false"
             class="mb-3 rounded border border-zinc-700/60 bg-zinc-950/50 px-2 py-1.5 text-[11px] text-zinc-500"
           >
-            此人格文件主要靠上方「摘要」定义（未写 identity/values 等结构化段）。
+            此人格文件主要靠上方「摘要」定义（未写 V1 结构化段）。
             下面若出现 HomeAgent / 清晰直接 等，是系统占位默认值，不是文件正文。
           </p>
 
@@ -278,15 +315,16 @@ onMounted(() => {
 
           <div class="mb-3 grid grid-cols-1 gap-3 md:grid-cols-2">
             <div>
-              <p class="mb-1 text-[11px] text-zinc-500">价值观</p>
-              <div class="flex flex-wrap gap-1">
-                <span
-                  v-for="(v, i) in (persona.values || [])"
-                  :key="i"
-                  class="rounded bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-300"
-                >{{ v }}</span>
-                <span v-if="!(persona.values || []).length" class="text-xs text-zinc-600">—</span>
-              </div>
+              <p class="mb-1 text-[11px] text-zinc-500">价值倾向</p>
+              <ul class="space-y-1 text-xs text-zinc-300">
+                <li v-for="(v, i) in valuePriorities" :key="i">
+                  {{ unitText(v) }}
+                  <span v-if="unitMeta(v)" class="ml-1 font-mono text-[10px] text-zinc-600">
+                    {{ unitMeta(v) }}
+                  </span>
+                </li>
+                <li v-if="!valuePriorities.length" class="text-zinc-600">—</li>
+              </ul>
             </div>
             <div>
               <p class="mb-1 text-[11px] text-zinc-500">UI 特质</p>
@@ -301,12 +339,51 @@ onMounted(() => {
             </div>
           </div>
 
-          <div class="mb-3">
-            <p class="mb-1 text-[11px] text-zinc-500">行为原则</p>
+          <div v-if="valueConflicts.length" class="mb-3">
+            <p class="mb-1 text-[11px] text-zinc-500">价值冲突倾向</p>
             <ul class="list-inside list-disc space-y-0.5 text-xs text-zinc-300">
-              <li v-for="(p, i) in (persona.principles || [])" :key="i">{{ p }}</li>
-              <li v-if="!(persona.principles || []).length" class="list-none text-zinc-600">—</li>
+              <li v-for="(v, i) in valueConflicts" :key="i">
+                {{ unitText(v) }}
+                <span v-if="unitMeta(v)" class="ml-1 font-mono text-[10px] text-zinc-600">
+                  {{ unitMeta(v) }}
+                </span>
+              </li>
             </ul>
+          </div>
+
+          <div v-if="worldviewSections.length" class="mb-3">
+            <p class="mb-1 text-[11px] text-zinc-500">世界观 / beliefs</p>
+            <div class="space-y-2 text-xs text-zinc-300">
+              <div v-for="([name, section]) in worldviewSections" :key="name" class="rounded bg-zinc-950/50 px-2 py-1.5">
+                <p class="mb-1 font-mono text-[11px] text-zinc-500">{{ name }}</p>
+                <p v-if="section?.summary" class="mb-1">{{ section.summary }}</p>
+                <ul class="list-inside list-disc space-y-0.5">
+                  <li v-for="(b, i) in (section?.beliefs || [])" :key="i">
+                    {{ unitText(b) }}
+                    <span v-if="unitMeta(b)" class="ml-1 font-mono text-[10px] text-zinc-600">
+                      {{ unitMeta(b) }}
+                    </span>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="tendencyGroups.length" class="mb-3">
+            <p class="mb-1 text-[11px] text-zinc-500">行为倾向（tendencies，不是硬规则）</p>
+            <div class="space-y-2 text-xs text-zinc-300">
+              <div v-for="([group, items]) in tendencyGroups" :key="group" class="rounded bg-zinc-950/50 px-2 py-1.5">
+                <p class="mb-1 font-mono text-[11px] text-zinc-500">{{ group }}</p>
+                <ul class="list-inside list-disc space-y-0.5">
+                  <li v-for="(t, i) in items" :key="i">
+                    {{ unitText(t) }}
+                    <span v-if="unitMeta(t)" class="ml-1 font-mono text-[10px] text-zinc-600">
+                      {{ unitMeta(t) }}
+                    </span>
+                  </li>
+                </ul>
+              </div>
+            </div>
           </div>
 
           <div class="mb-3">
@@ -336,10 +413,10 @@ onMounted(() => {
           </div>
 
           <div>
-            <p class="mb-1 text-[11px] text-zinc-500">禁止项</p>
+            <p class="mb-1 text-[11px] text-zinc-500">Policy 备注（旧字段仅调试，不进入 Persona Core）</p>
             <ul class="list-inside list-disc space-y-0.5 text-xs text-zinc-400">
-              <li v-for="(p, i) in (persona.prohibitions || [])" :key="i">{{ p }}</li>
-              <li v-if="!(persona.prohibitions || []).length" class="list-none text-zinc-600">—</li>
+              <li v-for="(p, i) in legacyPolicyNotes" :key="i">{{ p }}</li>
+              <li v-if="!legacyPolicyNotes.length" class="list-none text-zinc-600">—</li>
             </ul>
           </div>
           </template>
@@ -478,6 +555,53 @@ onMounted(() => {
         <pre
           class="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-zinc-950/70 px-3 py-2 font-mono text-[11px] leading-relaxed text-zinc-400"
         >{{ mindContext || '—' }}</pre>
+      </section>
+
+      <section v-if="resolverDebug.length" class="mb-4 rounded border border-zinc-800 bg-zinc-900/40 p-3">
+        <h2 class="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+          Resolver Debug（未注入主模型）
+        </h2>
+        <ul class="max-h-40 space-y-1 overflow-auto text-xs text-zinc-400">
+          <li v-for="(row, i) in resolverDebug" :key="i" class="rounded bg-zinc-950/50 px-2 py-1">
+            <div class="mb-0.5 flex flex-wrap items-center gap-2 font-mono text-[11px] text-zinc-500">
+              <span>{{ row.source || 'unknown' }}</span>
+              <span>score={{ row.score ?? '—' }}</span>
+              <span>{{ row.visibility || '—' }}</span>
+              <span v-if="(row.tags || []).length">{{ row.tags.join(',') }}</span>
+            </div>
+            <p>{{ row.preview || row.reason || '—' }}</p>
+            <p v-if="row.reason" class="mt-0.5 font-mono text-[10px] text-zinc-600">{{ row.reason }}</p>
+          </li>
+        </ul>
+      </section>
+
+      <section v-if="advisorDebug" class="mb-4 rounded border border-zinc-800 bg-zinc-900/40 p-3">
+        <h2 class="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+          Advisor Debug（未注入调试 reason）
+        </h2>
+        <dl class="grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
+          <div v-for="key in ['mode', 'personality_weight', 'stance', 'tone', 'verbosity', 'initiative', 'followup', 'source']" :key="key">
+            <dt class="font-mono text-[11px] text-zinc-500">{{ key }}</dt>
+            <dd>{{ advisorDebug[key] || '—' }}</dd>
+          </div>
+        </dl>
+        <div class="mt-2 grid grid-cols-1 gap-2 text-xs md:grid-cols-3">
+          <div>
+            <p class="mb-1 text-[11px] text-zinc-500">priority</p>
+            <p class="text-zinc-300">{{ (advisorDebug.priority || []).join('；') || '—' }}</p>
+          </div>
+          <div>
+            <p class="mb-1 text-[11px] text-zinc-500">behavior</p>
+            <p class="text-zinc-300">{{ (advisorDebug.behavior || []).join('；') || '—' }}</p>
+          </div>
+          <div>
+            <p class="mb-1 text-[11px] text-zinc-500">avoid</p>
+            <p class="text-zinc-300">{{ (advisorDebug.avoid || []).join('；') || '—' }}</p>
+          </div>
+        </div>
+        <p v-if="advisorDebug.reason" class="mt-2 font-mono text-[11px] text-zinc-600">
+          {{ advisorDebug.reason }}
+        </p>
       </section>
 
       <!-- 变更记录 -->
