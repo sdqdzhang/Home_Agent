@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from shared.llm import get_llm_client
-from modules.crawler.filters import FilterOutput
-from modules.crawler.model.prompts import (
+from ..filters import FilterOutput
+from .prompts import (
     CHAT_WITH_CONTEXT_PROMPT,
     CUSTOM_FILTER_PROMPT,
     JUDGE_CRAWL_PROMPT,
@@ -12,7 +12,7 @@ from modules.crawler.model.prompts import (
     SYSTEM_PROMPT,
     TUNE_CONFIG_PROMPT,
 )
-from modules.crawler.strategies.base import CrawlResult
+from ..strategies.base import CrawlResult
 
 
 class CrawlerAssistant:

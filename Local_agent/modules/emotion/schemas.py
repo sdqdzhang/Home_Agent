@@ -5,6 +5,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 AnalyzerMode = Literal["none", "light"]
+AdvisorMode = Literal["none", "conversation", "task", "tool_execution"]
 
 MoodLabel = Literal["平静", "愉快", "好奇", "专注", "疲惫", "担忧", "失落"]
 WorkMode = Literal["idle", "chat", "deep_tech", "clarifying", "executing", "wrapping_up"]
@@ -181,6 +182,64 @@ class AnalyzerOutput(BaseModel):
             data = dict(data)
             data["cognitive_load"] = data.pop("energy")
         return data
+
+
+class MindAdvice(BaseModel):
+    """轮前人格指导：影响表达和判断取舍，不参与工具权限。"""
+
+    mode: AdvisorMode = "none"
+    personality_weight: str = "medium"  # high | medium | low | minimal
+    stance: str = "neutral"
+    tone: str = "calm"
+    verbosity: str = "medium"  # short | medium | detailed
+    initiative: str = "low"  # none | low | medium | high
+    followup: str = "optional"  # none | optional | needed
+    priority: list[str] = Field(default_factory=list)
+    behavior: list[str] = Field(default_factory=list)
+    avoid: list[str] = Field(default_factory=list)
+    reason: str = ""
+    source: str = "program"  # program | advisor | fallback
+
+    @field_validator("personality_weight", mode="before")
+    @classmethod
+    def _personality_weight(cls, value: Any) -> str:
+        text = str(value or "medium").strip()
+        return text if text in {"high", "medium", "low", "minimal"} else "medium"
+
+    @field_validator("verbosity", mode="before")
+    @classmethod
+    def _verbosity(cls, value: Any) -> str:
+        text = str(value or "medium").strip()
+        return text if text in {"short", "medium", "detailed"} else "medium"
+
+    @field_validator("initiative", mode="before")
+    @classmethod
+    def _initiative(cls, value: Any) -> str:
+        text = str(value or "low").strip()
+        return text if text in {"none", "low", "medium", "high"} else "low"
+
+    @field_validator("followup", mode="before")
+    @classmethod
+    def _followup(cls, value: Any) -> str:
+        text = str(value or "optional").strip()
+        return text if text in {"none", "optional", "needed"} else "optional"
+
+    @field_validator("priority", "behavior", "avoid", mode="before")
+    @classmethod
+    def _str_list(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value.strip()] if value.strip() else []
+        if isinstance(value, (list, tuple, set)):
+            out: list[str] = []
+            for item in value:
+                text = str(item or "").strip()
+                if text:
+                    out.append(text[:80])
+            return out
+        text = str(value or "").strip()
+        return [text[:80]] if text else []
 
 
 class MindSnapshot(BaseModel):

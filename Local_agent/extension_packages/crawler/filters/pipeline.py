@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from modules.crawler.strategies.base import CrawlResult
+from ..strategies.base import CrawlResult
 
 
 @dataclass

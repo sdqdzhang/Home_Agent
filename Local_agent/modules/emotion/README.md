@@ -1,6 +1,6 @@
 # 情感与状态 / Mind（emotion）
 
-程序驱动的心智与状态模块：维护短期情绪连续性，并向主对话注入 **Mind Context**。
+程序驱动的 Mind Runtime：维护短期情绪连续性，读取稳定 Persona Core，并通过 Resolver 向主对话注入紧凑 **Mind Context**。
 
 - **模块 ID**：`emotion`
 - **发送名**：`情感与性格状态模块`
@@ -12,18 +12,18 @@
 | 状态 | 行为 |
 |------|------|
 | **关闭**（默认） | 主对话不注入 Mind Context，不跑情绪更新；与接入前一致 |
-| **开启** | 注入人格/状态，轮末事件检测 / Analyzer / 状态更新生效 |
+| **开启** | 注入 Resolver 裁剪后的 Mind Context，轮末事件检测 / Analyzer / 状态更新生效 |
 
 - 环境变量：`LA_EMOTION_ENABLED=false|true`（初始默认）
 - 运行时：工作台开关或 `set_enabled`；写入 `data/emotion/enabled.json`，优先于环境变量
 
 | 做 | 不做 |
 |----|------|
-| 人格文件即插即用（YAML/JSON） | 会话摘要、Open Tasks（归 CM） |
+| Persona Core 即插即用（YAML/JSON） | 会话摘要、Open Tasks（归 CM） |
 | mood + intensity + persistence；**有效事件优先于衰减** | User Model / Experience 库（归 memory） |
 | `cognitive_load` / `focus`（程序粗估，可被 Analyzer 覆盖） | 双写项目/任务事实 |
 | work_mode + interaction_mode、familiarity + current_warmth | Live2D / TTS / 四维关系 |
-| Mind Context → main（含表达边界） | 每轮改人格核心 |
+| Resolver → Compact Mind Context（含 Policy 边界） | 每轮改人格核心 |
 
 ## 状态字段
 
@@ -42,7 +42,7 @@ turn_end
       · 有效情绪事件 → 更新/维持 intensity（不走自然衰减）
       · 无有效事件 → 按 persistence 衰减 intensity，并回落 warmth
       · 更新 familiarity / current_warmth / interaction_mode
-  → 注入 Mind Context（含表达边界）/ 推送 UI
+  → Resolver + Mind Advisor 生成 Compact Mind Context（含 Policy 边界）/ 推送 UI
 ```
 
 触发规则仍为：`tool_completed` / `long_turn` / `stale_mind` / `affective_hint` / `mode_shift`。
@@ -53,7 +53,7 @@ turn_end
 
 | 方法 | 说明 |
 |------|------|
-| `context_for_main(session_id)` | 开启时返回 Mind Context；关闭时 `mind_context=""` |
+| `context_for_main(session_id, user_text="")` | 开启时返回 Mind Context、`resolver_debug`、`advisor_debug`；关闭时 `mind_context=""` |
 | `on_turn_end(MindTurnEndEvent)` | 仅开启时更新状态 |
 | `is_enabled()` / `set_enabled(bool)` | 总开关 |
 | `get_snapshot` / `get_persona` / `list_personas` | 调试与列举 |
@@ -63,6 +63,9 @@ turn_end
 
 - 目录：`personas/*.yaml`（见 [PERSONA.md](./PERSONA.md)）
 - 环境变量：`LA_EMOTION_PERSONA`（默认 `default`）、可选 `LA_EMOTION_PERSONAS_DIR`
+- Persona Core 不直接作为 Prompt 注入；`resolver.py` 按当前用户消息选择少量相关人格片段。
+- `advisor.py` 调用 `mind.advisor` 槽位，把相关人格片段与 Mind State 转成结构化回应策略。
+- 安全、真实性、工具越权等通用约束属于 `policy.py`，不属于人格核心。
 
 ## 文件
 
@@ -70,7 +73,7 @@ turn_end
 emotion/
   service.py
   events.py / continuity.py / rules.py / analyzer.py / context.py
-  persona_loader.py / persona_schema.py / config.py
+  persona_loader.py / persona_schema.py / resolver.py / advisor.py / policy.py / config.py
   personas/default.yaml / casual.yaml
   PERSONA.md / INTEGRATION.md
 ```

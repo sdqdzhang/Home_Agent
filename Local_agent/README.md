@@ -282,7 +282,7 @@ result = await call("executor", "execute", ExecuteRequest(
 | `planning.clarify` / `planning.plan` | planning | 质询 / 出图 |
 | `main.chat` | main | 主对话 Function Calling |
 | `conversation.analyze` | conversation_manager | Analyzer 更新 State / 记忆候选 |
-| `mind.analyze` | emotion | Mind Analyzer：情绪 / 氛围 / 行为倾向 |
+| `mind.analyze` / `mind.advisor` | emotion | 轮后状态分析 / 轮前人格回应指导 |
 
 ### 代码调用
 

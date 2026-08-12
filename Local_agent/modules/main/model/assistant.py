@@ -97,8 +97,23 @@ class MainAssistant:
         manager_ctx: dict[str, Any] | None,
         mind_ctx: dict[str, Any] | None = None,
         memory_ctx: dict[str, Any] | None = None,
+        available_modules: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         parts = [SYSTEM_PROMPT]
+        available_tools = tools_for_openai(available_modules=available_modules)
+        if available_tools:
+            names = [
+                str(((tool.get("function") or {}).get("name")) or "").strip()
+                for tool in available_tools
+            ]
+            names = [name for name in names if name]
+            parts.append(
+                "\n\n## 当前可用工具（以本段和 tools 参数为准）\n"
+                + "、".join(names)
+                + "\n不要调用未列出的函数。"
+            )
+        else:
+            parts.append("\n\n## 当前可用工具\n（无）\n不要调用任何工具函数。")
         mind_text = ""
         if mind_ctx:
             mind_text = str(mind_ctx.get("mind_context") or "").strip()
@@ -190,6 +205,11 @@ class MainAssistant:
         """
         llm = get_llm_client(self.slot_key)
         tools = tools_for_openai(available_modules=available_modules)
+        allowed_tool_names = {
+            str(((tool.get("function") or {}).get("name")) or "").strip()
+            for tool in tools
+        }
+        allowed_tool_names = {name for name in allowed_tool_names if name}
         tool_trace: list[dict[str, Any]] = []
         usage_totals = {
             "prompt_tokens": 0,
@@ -238,6 +258,25 @@ class MainAssistant:
                 tc = tool_calls[i]
                 fn = tc.get("function") or {}
                 name = str(fn.get("name") or "")
+                if name not in allowed_tool_names:
+                    tc_id = str(tc.get("id") or "")
+                    args = parse_tool_arguments(fn.get("arguments"))
+                    _append_tool_result(
+                        messages,
+                        tool_trace,
+                        name=name,
+                        args=args,
+                        tc_id=tc_id,
+                        result=ToolResultForModel(
+                            ok=False,
+                            tool=name,
+                            summary="工具未在本轮 tools 中提供",
+                            data={"available_tools": sorted(allowed_tool_names)},
+                            error=f"本轮不可用工具: {name}",
+                        ),
+                    )
+                    i += 1
+                    continue
 
                 if name in _CRAWLER_TOOLS:
                     group: list[tuple[str, str, dict[str, Any]]] = []

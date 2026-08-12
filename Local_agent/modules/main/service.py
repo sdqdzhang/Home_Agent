@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Literal
 
 from shared.server_center.client import ServerCenterClient
@@ -39,6 +41,24 @@ def _available_modules() -> set[str]:
     from shared.local_bus import list_registered_module_ids
 
     return list_registered_module_ids()
+
+
+def _data_dir() -> Path:
+    try:
+        from app.config import settings
+
+        return Path(settings.data_dir)
+    except Exception:
+        return Path(__file__).resolve().parent.parent.parent / "data"
+
+
+def _tool_names_for_modules(available_modules: set[str] | None) -> list[str]:
+    names: list[str] = []
+    for tool in tools_for_openai(available_modules=available_modules):
+        name = str(((tool.get("function") or {}).get("name")) or "").strip()
+        if name:
+            names.append(name)
+    return names
 
 
 @dataclass
@@ -299,14 +319,16 @@ class MainService:
         stamped_user = _stamp_user_text(user_text)
         sess.stamped_user_text = stamped_user
         manager_ctx = await self._manager_context(sess.session_id)
-        mind_ctx = await self._mind_context(sess.session_id)
+        mind_ctx = await self._mind_context(sess.session_id, user_text=user_text)
         memory_ctx = await self._memory_context(user_text)
+        available = _available_modules()
         messages = self.assistant.build_messages(
             user_text=stamped_user,
             history=sess.history,
             manager_ctx=manager_ctx,
             mind_ctx=mind_ctx,
             memory_ctx=memory_ctx,
+            available_modules=available,
         )
 
         async def run_planning(task: str, request_id: str) -> ToolResultForModel:
@@ -341,8 +363,6 @@ class MainService:
             run_planning=run_planning,
             session_id=sess.session_id,
         )
-        available = _available_modules()
-
         tool_trace: list[dict[str, Any]] = []
         usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         final_text = ""
@@ -359,7 +379,16 @@ class MainService:
             sess.module_log.append({"event": "planning_awaiting_clarify", "turn": sess.turn_index})
             return
 
-        await self._finish_turn(sess, stamped_user, final_text, tool_trace, usage, messages)
+        await self._finish_turn(
+            sess,
+            stamped_user,
+            final_text,
+            tool_trace,
+            usage,
+            messages,
+            mind_ctx=mind_ctx,
+            available_modules=available,
+        )
 
     async def _continue_planning(
         self,
@@ -447,6 +476,9 @@ class MainService:
         tool_trace: list[dict[str, Any]],
         usage: dict[str, Any],
         messages: list[dict[str, Any]],
+        *,
+        mind_ctx: dict[str, Any] | None = None,
+        available_modules: set[str] | None = None,
     ) -> None:
         # 先推送可见回复，再做 CM / Mind（避免收尾 LLM 拖住 busy、吞掉后续「谢谢」）
         text = (final_text or "").strip() or "好的，我这边处理好了。"
@@ -464,6 +496,16 @@ class MainService:
         if used <= 0:
             used = min(sess.context_limit_tokens, total)
         sess.context_used_tokens = min(sess.context_limit_tokens, used)
+
+        self._write_advisor_turn_log(
+            sess,
+            user_text=user_text,
+            final_text=text,
+            tool_trace=tool_trace,
+            usage=usage,
+            mind_ctx=mind_ctx,
+            available_modules=available_modules,
+        )
 
         planning_done = any(t.get("tool") == "planning_run" for t in tool_trace)
         executor_done = any(t.get("tool") == "executor_run" for t in tool_trace)
@@ -499,6 +541,48 @@ class MainService:
                 files_changed=files_changed,
             )
         )
+
+    def _write_advisor_turn_log(
+        self,
+        sess: _Session,
+        *,
+        user_text: str,
+        final_text: str,
+        tool_trace: list[dict[str, Any]],
+        usage: dict[str, Any],
+        mind_ctx: dict[str, Any] | None,
+        available_modules: set[str] | None,
+    ) -> None:
+        """测试期 JSONL 日志：记录 Advisor、Mind Context 与工具可用性。"""
+
+        try:
+            log_dir = _data_dir() / "debug"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            path = log_dir / "mind_advisor_turns.jsonl"
+            record = {
+                "ts": datetime.now().astimezone().isoformat(),
+                "session_id": sess.session_id,
+                "turn_index": sess.turn_index,
+                "user_text": user_text,
+                "assistant_text": final_text,
+                "history_tail": list(sess.history[-6:]),
+                "available_modules": sorted(available_modules or []),
+                "available_tools": _tool_names_for_modules(available_modules),
+                "tool_trace": tool_trace,
+                "usage": usage,
+                "mind": {
+                    "enabled": bool((mind_ctx or {}).get("enabled")),
+                    "persona_id": (mind_ctx or {}).get("persona_id"),
+                    "persona_display_name": (mind_ctx or {}).get("persona_display_name"),
+                    "resolver_debug": (mind_ctx or {}).get("resolver_debug") or [],
+                    "advisor_debug": (mind_ctx or {}).get("advisor_debug") or {},
+                    "mind_context": (mind_ctx or {}).get("mind_context") or "",
+                },
+            }
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception:
+            logger.exception("write mind advisor turn log failed")
 
     async def _notify_after_turn(
         self,
@@ -589,11 +673,11 @@ class MainService:
             logger.exception("memory.context_for_main failed")
             return {}
 
-    async def _mind_context(self, session_id: str) -> dict[str, Any]:
+    async def _mind_context(self, session_id: str, *, user_text: str = "") -> dict[str, Any]:
         try:
             if not await call("emotion", "is_enabled"):
                 return {}
-            return await call("emotion", "context_for_main", session_id)
+            return await call("emotion", "context_for_main", session_id, user_text)
         except Exception:
             logger.exception("emotion.context_for_main failed")
             return {}

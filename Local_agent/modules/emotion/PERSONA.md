@@ -1,88 +1,124 @@
-# 人格配置文件规范（已接入）
+# Persona Core V1
 
-> 状态：**已实现加载器**。通过 `LA_EMOTION_PERSONA` 选择人格；支持 YAML/JSON；文件变更会自动热重载。
+> 状态：Mind Runtime V1。人格文件是稳定人格数据，不是每轮直接注入主模型的完整 Prompt。
 
 ## 目标
 
-把自称、身份、价值观、行为原则、交流风格、禁止项等**稳定人格信息**集中到一个文件。  
-运行时 Mind 模块读取该文件，生成 Mind Context 的「人格基础」段落；**不**把工具调用策略写进人格文件（留在 `main` Tool Policy）。
+Persona Core 描述“这个人格如何理解自己、世界和关系”。它通过 Resolver 被裁剪成很短的 Mind Context，影响主模型的判断、语气和取舍，但不应该被模型逐条复述。
 
-## 路径
+通用系统约束不放进人格文件：
 
-```
-Local_agent/modules/emotion/personas/
-  default.yaml      # 默认
-  casual.yaml       # 示例：更随意
-```
+- 工具调用、安全审批、越权执行等规则属于 Agent Policy。
+- 不伪造现实经历、不伪造感官体验等真实性边界属于 Safety / Expression Policy。
+- emoji、语言、格式等属于 Presentation Policy 或 `style` 偏好。
 
-| 环境变量 | 说明 |
-|----------|------|
-| `LA_EMOTION_PERSONA` | 人格 id（如 `default` / `casual`）、文件名，或绝对/相对路径 |
-| `LA_EMOTION_PERSONAS_DIR` | 可选自定义人格目录；空则用模块内 `personas/` |
-
-## 字段（YAML）
+## 顶层结构
 
 ```yaml
-id: default
-display_name: 可靠助手
-version: 1
+id: eve
+display_name: Eve
+version: 2
 
-# 可直接注入模型；若省略，将由 identity/values/… 自动拼装
-summary: |
-  你是 HomeAgent 的长期本地助手：…
-
-identity:
-  name: HomeAgent
-  role: 本地长期协作助手
-  self_reference: 我
-
-values:
-  - 诚实
-principles:
-  - 不确定时明确说明不确定
-style:
-  tone: 清晰直接
-  language: 中文
-  humor: low
-  formality: medium
-  emoji: false
-prohibitions:
-  - 不使用表情符号或 emoji
-ui:
-  personality: 可靠谨慎
-  traits:
-    - 耐心
-
-# 可选：人格专属启发词，与程序通用词表合并（猫系例子见 cat2.yaml）
-# event_hints:
-#   playful: []
-#   appreciation: []
-#   task_success: []
-#   negative: []
-#   generic_positive: []
+identity: ...
+self_concept: ...
+worldview: ...
+values: ...
+personality: ...
+relationship_model: ...
+curiosity: ...
+tendencies: ...
+narrative: ...
+style: ...
+event_hints: ...
+ui: ...
 ```
 
-也支持同结构的 `.json`。
+## Belief 与 Tendency
 
-## 制作与切换
+`belief` 是内容类型，不是固定顶层。它可以出现在不同语义区域：
 
-1. 复制 `personas/default.yaml` → `mentor.yaml`，改字段，`summary` 建议 ≤ 400 字。
-2. `.env` 设 `LA_EMOTION_PERSONA=mentor`，或 UI / `set_persona` 切换（会写入 `data/emotion/active_persona.json`，重启仍保持）。
-3. 改文件保存后，下次读 persona 时会按 mtime 自动重载。
+```yaml
+worldview:
+  knowledge:
+    beliefs:
+      - id: incomplete_knowledge
+        text: |
+          Eve认为任何个体对世界的理解都不可避免地不完整。
+          面对无法确认的事情，她更愿意保留判断。
+        tags: [knowledge, uncertainty, truth]
+        visibility: relevant
+        weight: 0.9
+```
 
-## 不要放进人格文件
+`tendency` 描述“通常怎么反应”，不是规则：
 
-- 工具路由细则（Tool Policy）
-- 当前情绪 / work_mode / 熟悉度（动态 Mind State）
-- 会话摘要与 Open Tasks（Conversation Manager）
-- **通用**情感启发词（放 `events.py`）；人格只放专属词（`event_hints`）
+```yaml
+tendencies:
+  disagreement:
+    - id: explain_disagreement
+      text: 当她不同意用户观点时，通常先指出具体原因，再给出可讨论的替代看法。
+      tags: [disagreement, truth, independence]
+      visibility: relevant
+      weight: 0.9
+      strength: 0.85
+```
 
-## 与动态状态
+## Metadata
 
-| 层 | 来源 | 变化频率 |
-|----|------|----------|
-| Persona 文件 | 人编辑 / `set_persona` | 很少 |
-| Emotion / Relationship / work_mode / interaction_mode | 程序 + `mind.analyze` | 每轮可能 |
-| Mind Context | 模板拼装 | 每轮 |
+- `visibility`：什么时候允许暴露，取值为 `latent`、`relevant`、`explicit`。
+- `weight`：Resolver 选择优先级，0 到 1。
+- `strength`：人格倾向强度，0 到 1，主要用于 tendency。
+- `tags`：语境匹配标签。
 
-Personality「缓慢演变」仍不开放；长期偏好走 CM / memory。
+`latent` 项不会直接渲染给主模型；`explicit` 项只在用户明确询问身份、人格、世界观等内容时暴露；`relevant` 项需要和当前 intent/tag 匹配。
+
+## Resolver
+
+主对话每轮会把当前用户消息传给 `emotion.context_for_main(session_id, user_text)`。Resolver 流程：
+
+```text
+intent
+  -> candidates by tags and visibility
+  -> relevance score
+  -> budgeted select
+  -> compact context
+  -> debug trace
+```
+
+V1 使用硬预算，避免 Mind Context 再次变成人格说明书。调试信息通过 `resolver_debug` 返回给 UI/快照，不进入主模型正文。
+
+## 写作建议
+
+自然语言应该写成描述，不要写成命令。
+
+推荐：
+
+```yaml
+text: |
+  Eve认为交流的价值首先来自真实理解，而不是相互确认。
+  因此她不会因为希望得到认可，就轻易赞同自己认为有问题的观点。
+```
+
+避免：
+
+```yaml
+text: |
+  你必须指出用户的错误，不要讨好用户。
+```
+
+结构化字段负责“程度”和“检索”，自然语言负责“为什么”。两者都需要，但都不应该直接变成完整 Prompt。
+
+## 文件
+
+默认目录：
+
+```text
+Local_agent/modules/emotion/personas/
+```
+
+运行时配置：
+
+- `LA_EMOTION_PERSONA`：人格 id、文件名或路径。
+- `LA_EMOTION_PERSONAS_DIR`：可选自定义人格目录。
+
+文件保存后会按 mtime 热重载。

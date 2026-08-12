@@ -247,6 +247,14 @@ def build_seed_data() -> tuple[list[EndpointRecord], list[BindingRecord]]:
             max_tokens_override=1024,
             updated_at=now,
         ),
+        BindingRecord(
+            slot_key="mind.advisor",
+            endpoint_id=ep_default.id,
+            model_override=None,
+            temperature_override=0.1,
+            max_tokens_override=512,
+            updated_at=now,
+        ),
     ]
 
     # 确保 slot 数量与定义一致
@@ -346,7 +354,7 @@ def migrate_planning_slots(store: LlmConfigStore) -> None:
 
 
 def migrate_core_dialog_slots(store: LlmConfigStore) -> None:
-    """已有 DB 补齐 main.chat / conversation.analyze / mind.analyze。"""
+    """已有 DB 补齐 main.chat / conversation.analyze / mind.*。"""
     source = store.get_binding("default.chat")
     if not source:
         return
@@ -355,6 +363,7 @@ def migrate_core_dialog_slots(store: LlmConfigStore) -> None:
         "main.chat": (None, None),
         "conversation.analyze": (0.2, 2048),
         "mind.analyze": (0.2, 1024),
+        "mind.advisor": (0.1, 512),
     }
     for slot_key, (temp, max_tokens) in defaults.items():
         if store.get_binding(slot_key):
