@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from modules.emotion.advisor import default_advice
 from modules.emotion.persona_schema import PersonaCore
 from modules.emotion.policy import expression_boundaries, presentation_hints
 from modules.emotion.resolver import ResolvedPersonaContext, resolve_persona_context
-from modules.emotion.schemas import MindState
+from modules.emotion.schemas import MindAdvice, MindState
 
 _WORK_MODE_ZH = {
     "idle": "待命",
@@ -116,6 +117,7 @@ def build_mind_context(
     conversation_topic: str = "",
     conversation_project: str = "",
     user_text: str = "",
+    advice: MindAdvice | None = None,
 ) -> str:
     resolved = resolve_for_context(
         state,
@@ -123,9 +125,11 @@ def build_mind_context(
         persona_summary=persona_summary,
         user_text=user_text,
     )
+    advice = advice or default_advice(state=state, intent=resolved.intent)
     return render_mind_context(
         state,
         resolved=resolved,
+        advice=advice,
         persona=persona,
         conversation_topic=conversation_topic,
         conversation_project=conversation_project,
@@ -154,6 +158,7 @@ def render_mind_context(
     state: MindState,
     *,
     resolved: ResolvedPersonaContext,
+    advice: MindAdvice,
     persona: PersonaCore | None = None,
     conversation_topic: str = "",
     conversation_project: str = "",
@@ -207,6 +212,21 @@ def render_mind_context(
             lines.append(f"- {item}")
     else:
         lines.append("- 本轮无需显式人格资料；保持自然、准确和有边界的表达。")
+
+    lines.extend(["", "### 本轮人格指导（Mind Advisor）"])
+    lines.append(f"- mode: {advice.mode}")
+    lines.append(f"- personality_weight: {advice.personality_weight}")
+    lines.append(f"- stance: {advice.stance}")
+    lines.append(f"- tone: {advice.tone}")
+    lines.append(f"- verbosity: {advice.verbosity}")
+    lines.append(f"- initiative: {advice.initiative}")
+    lines.append(f"- followup: {advice.followup}")
+    if advice.priority:
+        lines.append(f"- priority: {'；'.join(advice.priority[:4])}")
+    if advice.behavior:
+        lines.append(f"- behavior: {'；'.join(advice.behavior[:6])}")
+    if advice.avoid:
+        lines.append(f"- avoid: {'；'.join(advice.avoid[:6])}")
 
     lines.extend(["", "### 表达边界（Policy，不属于人格核心）"])
     for item in expression_boundaries(state):

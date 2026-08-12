@@ -7,9 +7,9 @@ import feedparser
 import httpx
 from bs4 import BeautifulSoup
 
-from modules.crawler.config import crawler_settings
-from modules.crawler.strategies.base import CrawlResult
-from modules.crawler.strategies.diagnose import annotate_block_signals
+from ..config import crawler_settings
+from .base import CrawlResult
+from .diagnose import annotate_block_signals
 
 
 def _verify_ssl(cfg: dict) -> bool:

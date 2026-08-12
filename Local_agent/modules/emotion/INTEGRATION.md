@@ -30,7 +30,16 @@ ctx = await call("emotion", "context_for_main", "default", "介绍一下自己�
 ```
 
 Mind Context 使用文案化标签（熟悉度/认知负荷/专注），不直接注入裸 float。
-Persona Core 由 Resolver 按当前用户消息裁剪；`resolver_debug` 记录被选中人格片段及原因，但不进入主模型正文。
+Persona Core 由 Resolver 按当前用户消息裁剪；Mind Advisor 再将相关人格片段与 Mind State 转成结构化回应策略。
+`resolver_debug` / `advisor_debug` 记录调试信息，但不作为用户可见回答内容。
+
+测试期主对话会追加 JSONL 调试日志：
+
+```text
+data/debug/mind_advisor_turns.jsonl
+```
+
+每行包含 user/assistant 文本、可用模块与工具、tool_trace、Mind Context、resolver_debug、advisor_debug，便于排查人格指导是否影响工具调用。
 
 ## UI → emotion
 
@@ -45,4 +54,5 @@ Persona Core 由 Resolver 按当前用户消息裁剪；`resolver_debug` 记录�
 
 ## LLM
 
-- `mind.analyze`：规则命中后的轻量分析
+- `mind.analyze`：轮后规则命中后的轻量状态分析
+- `mind.advisor`：轮前人格回应指导，只输出结构化策略，不回答用户、不调用工具

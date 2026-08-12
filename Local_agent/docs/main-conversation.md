@@ -10,7 +10,7 @@
 |------|--------|------|
 | **main** | 用户（经 Server Center） | 聊天 + FC；轮前拉取 CM / Mind 上下文；轮后通知 CM 与 Mind |
 | **conversation_manager** | **仅程序**（`local_bus`） | 会话 State/Summary/Open Tasks；规则触发 Analyzer；记忆候选 → `memory` |
-| **emotion（Mind）** | **仅程序**（`local_bus`） | 情绪连续性、work_mode、关系熟悉度；规则触发 `mind.analyze`；Resolver 注入紧凑 Mind Context |
+| **emotion（Mind）** | **仅程序**（`local_bus`） | 情绪连续性、work_mode、关系熟悉度；规则触发 `mind.analyze`；Resolver + Mind Advisor 注入紧凑 Mind Context |
 | **memory** | Manager（及独立调试） | 落库；**不对 main 的 FC 开放** |
 | **security / processor** | executor / planning 内部 | **不对 main 开放** |
 
@@ -25,7 +25,7 @@
 main FC → planning | executor | rag | env | crawler(扩展)…
 ```
 
-**Mind Context** 回答「现在该怎么说话」；**Conversation Context** 回答「之前聊了什么」。Mind Context 由 Persona Core、动态状态和 Policy 经 Resolver 裁剪生成，不直接展开完整人格文件。
+**Mind Context** 回答「现在该怎么说话」；**Conversation Context** 回答「之前聊了什么」。Mind Context 由 Persona Core、动态状态和 Policy 经 Resolver 裁剪，再由 Mind Advisor 生成本轮结构化回应策略；不直接展开完整人格文件。
 
 ## 2. Function Calling 工具表
 
@@ -68,15 +68,17 @@ main FC → planning | executor | rag | env | crawler(扩展)…
 - work_mode 可由 planning/executor 结果推断，与 mood 独立
 - 只读 CM 的 topic/project，不双写任务事实
 
-### 4.2 Analyzer（`mind.analyze`）
+### 4.2 Analyzer（`mind.analyze`）与 Advisor（`mind.advisor`）
 
 规则命中后，LLM 解释事件意义（significance / persistence / resolve_prior / warmth_delta / interaction_mode 等）；强度有最大步长，由程序 apply。  
 无有效情绪向事件时不抬强度，只按 persistence 回落。
 
+轮前 `mind.advisor` 读取当前用户消息、Resolver 选中的人格片段和 Mind State，只输出结构化回应策略（mode / stance / tone / verbosity / initiative / followup / behavior / avoid），不回答用户、不调用工具。
+
 ### 4.3 人格与开关
 
 - YAML/JSON：`modules/emotion/personas/`，`LA_EMOTION_PERSONA`；见 `PERSONA.md`。
-- Persona Core 不直接作为 Prompt 注入；Resolver 按当前用户消息选择少量相关人格片段。
+- Persona Core 不直接作为 Prompt 注入；Resolver 按当前用户消息选择少量相关人格片段，Mind Advisor 再生成本轮回应策略。
 - Mind Context 含 Policy 边界；安全、真实性、工具越权等通用约束不放进人格文件。
 - **总开关**：默认关闭。关闭时主对话不注入 Mind、不跑状态更新。`LA_EMOTION_ENABLED` 或工作台开关（`data/emotion/enabled.json`）。
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from modules.emotion.context import build_mind_context
+from modules.emotion.advisor import default_advice
 from modules.emotion.persona_loader import load_persona_file
 from modules.emotion.resolver import detect_intent, resolve_persona_context
 from modules.emotion.schemas import MindState
@@ -44,5 +45,17 @@ def test_task_context_hides_explicit_identity_dossier():
 
     assert "intent=task" in context
     assert "### 当前相关人格信息" in context
+    assert "### 本轮人格指导（Mind Advisor）" in context
+    assert "personality_weight: low" in context
     assert "外表接近十四五岁" not in context
     assert "不要向用户逐条复述人格资料" in context
+
+
+def test_default_advice_for_self_intro_discourages_capability_catalog():
+    advice = default_advice(state=MindState(), intent="self_intro")
+
+    assert advice.mode == "conversation"
+    assert advice.verbosity == "short"
+    assert advice.followup == "none"
+    assert "avoid_capability_catalog" in advice.behavior
+    assert "tool_catalog" in advice.avoid

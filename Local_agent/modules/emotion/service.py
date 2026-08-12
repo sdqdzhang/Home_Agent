@@ -10,6 +10,7 @@ from typing import Any
 from shared.server_center.client import ServerCenterClient
 from shared.local_bus import get_service
 from modules.emotion import MODULE_ALIASES, MODULE_ID, STATE_CHANGE_TAIL
+from modules.emotion.advisor import MindAdvisor
 from modules.emotion.analyzer import MindAnalyzer
 from modules.emotion.config import (
     emotion_settings,
@@ -19,7 +20,8 @@ from modules.emotion.config import (
 from modules.emotion.context import (
     build_display_labels,
     build_mind_context,
-    resolver_debug_for_context,
+    render_mind_context,
+    resolve_for_context,
 )
 from modules.emotion.continuity import (
     apply_emotion_delta,
@@ -119,6 +121,7 @@ class _SessionRuntime:
         self.last_project = ""
         self.cached_context = ""
         self.resolver_debug: list[dict[str, Any]] = []
+        self.advisor_debug: dict[str, Any] = {}
 
 
 class EmotionService:
@@ -130,6 +133,7 @@ class EmotionService:
     ) -> None:
         self.server = server_client
         self.analyzer = MindAnalyzer()
+        self.advisor = MindAdvisor()
         self.personas = persona_store or PersonaStore(data_dir=_data_dir())
         self._sessions: dict[str, _SessionRuntime] = {}
         override = load_enabled_override(_data_dir())
@@ -183,7 +187,9 @@ class EmotionService:
     def get_snapshot(self, session_id: str = "default") -> MindSnapshot:
         return self._build_snapshot(self._session(session_id))
 
-    def context_for_main(self, session_id: str = "default", user_text: str = "") -> dict[str, Any]:
+    async def context_for_main(
+        self, session_id: str = "default", user_text: str = ""
+    ) -> dict[str, Any]:
         if not self.is_enabled():
             return {
                 "enabled": False,
@@ -191,21 +197,33 @@ class EmotionService:
                 "mind_state": {},
                 "persona_id": "",
                 "persona_display_name": "",
+                "resolver_debug": [],
+                "advisor_debug": {},
             }
         rt = self._session(session_id)
         topic, project = self._read_conversation_focus(session_id)
         rt.last_topic = topic
         rt.last_project = project
         persona = self._persona()
-        text = build_mind_context(
+        resolved = resolve_for_context(rt.state, persona=persona, user_text=user_text)
+        advice = await self.advisor.advise(
+            state=rt.state,
+            user_text=user_text,
+            resolved=resolved,
+            conversation_topic=topic,
+            conversation_project=project,
+        )
+        text = render_mind_context(
             rt.state,
+            resolved=resolved,
+            advice=advice,
             persona=persona,
             conversation_topic=topic,
             conversation_project=project,
-            user_text=user_text,
         )
         rt.cached_context = text
-        rt.resolver_debug = resolver_debug_for_context(rt.state, persona=persona, user_text=user_text)
+        rt.resolver_debug = list(resolved.debug)
+        rt.advisor_debug = advice.model_dump()
         return {
             "enabled": True,
             "mind_context": text,
@@ -214,6 +232,7 @@ class EmotionService:
             "persona_display_name": persona.display_name,
             "display": build_display_labels(rt.state),
             "resolver_debug": list(rt.resolver_debug),
+            "advisor_debug": dict(rt.advisor_debug),
         }
 
     def _apply_turn_state(
@@ -439,16 +458,24 @@ class EmotionService:
             rt.recent_changes = (rt.recent_changes + [sc])[-STATE_CHANGE_TAIL:]
 
         persona = self._persona()
-        rt.cached_context = build_mind_context(
+        resolved = resolve_for_context(rt.state, persona=persona, user_text=event.user_text)
+        advice = await self.advisor.advise(
+            state=rt.state,
+            user_text=event.user_text,
+            resolved=resolved,
+            conversation_topic=topic,
+            conversation_project=project,
+        )
+        rt.cached_context = render_mind_context(
             rt.state,
+            resolved=resolved,
+            advice=advice,
             persona=persona,
             conversation_topic=topic,
             conversation_project=project,
-            user_text=event.user_text,
         )
-        rt.resolver_debug = resolver_debug_for_context(
-            rt.state, persona=persona, user_text=event.user_text
-        )
+        rt.resolver_debug = list(resolved.debug)
+        rt.advisor_debug = advice.model_dump()
         snap = self._build_snapshot(rt)
         if sc is not None:
             await self._push_mind_snapshot(rt, change=sc)
@@ -584,6 +611,7 @@ class EmotionService:
         payload["available_personas"] = self.list_personas()
         payload["active_spec"] = self.personas.active_spec
         payload["resolver_debug"] = list(rt.resolver_debug)
+        payload["advisor_debug"] = dict(rt.advisor_debug)
         if change is not None:
             payload["last_change"] = change.model_dump()
         if request_id:

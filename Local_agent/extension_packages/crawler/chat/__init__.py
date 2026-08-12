@@ -1,3 +1,3 @@
-from modules.crawler.chat.memory import ConversationMemory
+from .memory import ConversationMemory
 
 __all__ = ["ConversationMemory"]

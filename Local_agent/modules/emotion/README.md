@@ -42,7 +42,7 @@ turn_end
       · 有效情绪事件 → 更新/维持 intensity（不走自然衰减）
       · 无有效事件 → 按 persistence 衰减 intensity，并回落 warmth
       · 更新 familiarity / current_warmth / interaction_mode
-  → Resolver 生成 Compact Mind Context（含 Policy 边界）/ 推送 UI
+  → Resolver + Mind Advisor 生成 Compact Mind Context（含 Policy 边界）/ 推送 UI
 ```
 
 触发规则仍为：`tool_completed` / `long_turn` / `stale_mind` / `affective_hint` / `mode_shift`。
@@ -53,7 +53,7 @@ turn_end
 
 | 方法 | 说明 |
 |------|------|
-| `context_for_main(session_id, user_text="")` | 开启时返回 Mind Context 与 `resolver_debug`；关闭时 `mind_context=""` |
+| `context_for_main(session_id, user_text="")` | 开启时返回 Mind Context、`resolver_debug`、`advisor_debug`；关闭时 `mind_context=""` |
 | `on_turn_end(MindTurnEndEvent)` | 仅开启时更新状态 |
 | `is_enabled()` / `set_enabled(bool)` | 总开关 |
 | `get_snapshot` / `get_persona` / `list_personas` | 调试与列举 |
@@ -64,6 +64,7 @@ turn_end
 - 目录：`personas/*.yaml`（见 [PERSONA.md](./PERSONA.md)）
 - 环境变量：`LA_EMOTION_PERSONA`（默认 `default`）、可选 `LA_EMOTION_PERSONAS_DIR`
 - Persona Core 不直接作为 Prompt 注入；`resolver.py` 按当前用户消息选择少量相关人格片段。
+- `advisor.py` 调用 `mind.advisor` 槽位，把相关人格片段与 Mind State 转成结构化回应策略。
 - 安全、真实性、工具越权等通用约束属于 `policy.py`，不属于人格核心。
 
 ## 文件
@@ -72,7 +73,7 @@ turn_end
 emotion/
   service.py
   events.py / continuity.py / rules.py / analyzer.py / context.py
-  persona_loader.py / persona_schema.py / resolver.py / policy.py / config.py
+  persona_loader.py / persona_schema.py / resolver.py / advisor.py / policy.py / config.py
   personas/default.yaml / casual.yaml
   PERSONA.md / INTEGRATION.md
 ```

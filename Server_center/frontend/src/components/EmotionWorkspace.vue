@@ -55,6 +55,11 @@ const legacyPolicyNotes = computed(() =>
 const resolverDebug = computed(() =>
   Array.isArray(snapshot.value?.resolver_debug) ? snapshot.value.resolver_debug : [],
 )
+const advisorDebug = computed(() =>
+  snapshot.value?.advisor_debug && typeof snapshot.value.advisor_debug === 'object'
+    ? snapshot.value.advisor_debug
+    : null,
+)
 
 const emotion = computed(() => mindState.value?.emotion || null)
 const relationship = computed(() => mindState.value?.relationship || null)
@@ -568,6 +573,35 @@ onMounted(() => {
             <p v-if="row.reason" class="mt-0.5 font-mono text-[10px] text-zinc-600">{{ row.reason }}</p>
           </li>
         </ul>
+      </section>
+
+      <section v-if="advisorDebug" class="mb-4 rounded border border-zinc-800 bg-zinc-900/40 p-3">
+        <h2 class="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+          Advisor Debug（未注入调试 reason）
+        </h2>
+        <dl class="grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
+          <div v-for="key in ['mode', 'personality_weight', 'stance', 'tone', 'verbosity', 'initiative', 'followup', 'source']" :key="key">
+            <dt class="font-mono text-[11px] text-zinc-500">{{ key }}</dt>
+            <dd>{{ advisorDebug[key] || '—' }}</dd>
+          </div>
+        </dl>
+        <div class="mt-2 grid grid-cols-1 gap-2 text-xs md:grid-cols-3">
+          <div>
+            <p class="mb-1 text-[11px] text-zinc-500">priority</p>
+            <p class="text-zinc-300">{{ (advisorDebug.priority || []).join('；') || '—' }}</p>
+          </div>
+          <div>
+            <p class="mb-1 text-[11px] text-zinc-500">behavior</p>
+            <p class="text-zinc-300">{{ (advisorDebug.behavior || []).join('；') || '—' }}</p>
+          </div>
+          <div>
+            <p class="mb-1 text-[11px] text-zinc-500">avoid</p>
+            <p class="text-zinc-300">{{ (advisorDebug.avoid || []).join('；') || '—' }}</p>
+          </div>
+        </div>
+        <p v-if="advisorDebug.reason" class="mt-2 font-mono text-[11px] text-zinc-600">
+          {{ advisorDebug.reason }}
+        </p>
       </section>
 
       <!-- 变更记录 -->
