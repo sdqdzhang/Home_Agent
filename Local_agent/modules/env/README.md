@@ -1,6 +1,6 @@
 # 环境感知模块
 
-高频采集（20s）、统计压缩（10min）、低频 LLM 汇报、按需截图。作为主 Agent 附属模块，与 Server Center 通信参数由 `app/main.py` 统一配置。
+高频采集（20s）、统计压缩（10min）、低频 LLM 汇报、按需截图/拍照。作为主 Agent 附属模块，与 Server Center 通信参数由 `app/main.py` 统一配置。主对话仅在主动调用 `env_*` 工具时展示结果；静默 `system_status` 不进主时间线。
 
 ## 采集指标（每 20 秒）
 
@@ -66,6 +66,7 @@
 ```json
 {
   "text": "远程桌面截图",
+  "capture_type": "desktop",
   "format": "jpeg",
   "width": 1920,
   "height": 1080,
@@ -74,11 +75,23 @@
 }
 ```
 
-因 Base64 体积较大，使用 RSA 分块加密（`encrypted_chunks`）经 `POST /api/v1/messages` 发送；服务端已支持解密合并。
+因 Base64 体积较大，使用混合加密经 `POST /api/v1/messages` 发送。截图同时保存到本地 `data/env/screenshots/shot_*.jpg`。
 
-截图同时保存到本地 `data/env/screenshots/shot_*.jpg`。
+### `camera_capture`
 
-截图保存：`data/env/screenshots/`；摄像头照片：`data/env/camera/`。
+```json
+{
+  "text": "摄像头拍照",
+  "capture_type": "camera",
+  "camera_index": 0,
+  "format": "jpeg",
+  "width": 1280,
+  "height": 720,
+  "image_base64": "..."
+}
+```
+
+摄像头照片：`data/env/camera/`。
 
 ### 触发截图 / 拍照（用户 → 模块）
 
@@ -95,6 +108,15 @@
 | POST | `/env/collect` | 手动采集 |
 | POST | `/env/summary` | 手动压缩总结 |
 | POST | `/env/screenshot` | 截图 |
+| POST | `/env/camera` | 摄像头拍照 |
+| POST | `/env/chat` | 基于系统状态问答 |
+
+## LLM 槽位
+
+| slot | 用途 |
+|------|------|
+| `env.summary` | 周期窗口总结与告警 |
+| `env.chat` | 基于系统状态问答 |
 
 ## 告警阈值（`.env`）
 
@@ -105,5 +127,6 @@
 | `LA_ENV_DISK_FREE_ALERT_GB` | 5 |
 | `LA_ENV_PING_LOSS_ALERT_PERCENT` | 10 |
 | `LA_ENV_PING_LATENCY_ALERT_MS` | 500 |
+| `LA_ENV_CAMERA_INDEX` | 0 |
 
 LLM 总结另可基于压缩数据独立判定 `alert`（每次新对话，不携带历史）。

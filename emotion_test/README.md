@@ -5,6 +5,7 @@
 - 仅标准库（`tkinter` / `urllib` / `json`）
 - **不依赖、不修改**仓库其他代码；用完可整夹删除
 - 不挂进 `联调启动.bat`，联调服务起来后手动启动本工具
+- 需在 Local Agent 打开 Mind（`LA_EMOTION_ENABLED=true` 或工作台开关），否则 jsonl 无 advisor/resolver 记录
 
 ## 用法
 

@@ -1,6 +1,6 @@
 # RAG 模块
 
-手动文档入库、Chroma 向量检索、`nomic-embed-text` 嵌入；问答时可选择由本地小模型总结或直接返回召回片段。
+手动文档入库、Chroma 向量检索、`nomic-embed-text` 嵌入；问答时可选择由本地小模型总结或直接返回召回片段。主对话可 `rag_query` / `rag_chat`，**不**往知识库写入。
 
 ## 配置（`.env` 前缀 `LA_RAG_`）
 
@@ -15,7 +15,7 @@
 | `MIN_CHUNK_SIZE` | `50` | 策略③ 小块合并下限 |
 | `EMBED_BREAKPOINT_THRESHOLD` | `0.35` | 策略③ 相邻句向量余弦距离阈值 |
 | `EMBED_BREAKPOINT_PERCENTILE` | `75` | 策略③ 距离百分位兜底（取 max(阈值, P75)） |
-| `TOP_K` / `MIN_SCORE` / `SUMMARIZE` | — | 检索与问答 |
+| `TOP_K` / `MIN_SCORE` / `SUMMARIZE` | `5` / `0.25` / `true` | 检索与问答 |
 
 ## 四种分块策略
 
@@ -46,14 +46,27 @@
 
 **策略④说明：** 章节超长时按 `\n\n` → `\n` → 空格递归细分；正文前注入 `[Header_1 > Header_2]` 面包屑，metadata 写入 `Header_1`、`Header_2`…
 
+## LLM 槽位
+
+| slot | 用途 |
+|------|------|
+| `rag.summarize` | 检索后阅读片段并生成回答 |
+| `rag.split` | 语义分块裁判 |
+| `rag.embed` | 入库 embedding |
+
 ## 本地 API
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/rag/ingest/file` | 手动导入（支持 `split_mode`） |
-| POST | `/rag/ingest/text` | 手动导入文本 |
-| GET | `/rag/status` | 含分块配置 |
-| … | 见上文删除/问答 API | |
+| GET | `/rag/status` | 知识库状态与分块配置 |
+| POST | `/rag/ingest/file` | 导入文件（支持 `split_mode`） |
+| POST | `/rag/ingest/text` | 导入文本 |
+| POST | `/rag/query` | 检索问答 |
+| POST | `/rag/chat` | 带会话的 RAG 对话 |
+| GET | `/rag/documents` | 文档列表 |
+| POST | `/rag/delete/chunks` | 删除指定块 |
+| POST | `/rag/delete/document` | 删除文档 |
+| POST | `/rag/delete/collection` | 清空集合 |
 
 ### 入库示例
 

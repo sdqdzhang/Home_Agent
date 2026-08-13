@@ -1,13 +1,14 @@
 # Server Center
 
-HomeAgent 消息中转站：接收各模块 RSA 加密消息，按 `target` 路由，提供 Web UI 远程查看与审批。
+HomeAgent 消息中转站：接收各模块加密消息，按 `target` 路由，提供 Web UI 远程查看、审批与扩展管理。
 
 ## 功能概览
 
 - REST API 接收/查询/回复消息
-- WebSocket 按 `target` 实时推送
+- WebSocket 按 `target` 实时推送（模块频道加密；`user_ui` 明文给浏览器）
 - SQLite 持久化
-- 服务端统一 RSA 密钥对（OAEP-SHA256）
+- Local↔Server **混合加密**（RSA-OAEP + AES-256-GCM）；兼容旧版 RSA 分块
+- 代理 Local Agent 扩展安装 / 卸载 / 配置
 - Vue 3 前端（默认 `user_ui`）
 
 ## 目录结构
@@ -74,6 +75,9 @@ sudo systemctl status server-center
 |------|------|------|
 | `SC_HOST` | `0.0.0.0` | 监听地址 |
 | `SC_PORT` | `8765` | 端口 |
+| `SC_WIRE_ENCRYPT` | `true` | 与 Local `LA_WIRE_ENCRYPT` 保持一致 |
+| `SC_LOCAL_AGENT_URL` | `http://127.0.0.1:8770` | 扩展管理代理目标 |
+| `SC_TERMINAL_ENABLED` | `true` | 远程终端中继 |
 
 ---
 
@@ -109,19 +113,19 @@ sudo systemctl status server-center
 | `message` | object | 业务内容，`text` + 任意 `payload` |
 | `timestamp` | int | Unix 秒级时间戳 |
 
-**HTTP 提交格式**（RSA 加密后，超长自动分块）：
+**HTTP 提交格式**（默认混合加密 `v=1`：RSA-OAEP 包裹 AES-256-GCM 密钥）：
 
-单块：
 ```json
-{ "encrypted": "<base64 ciphertext>" }
+{
+  "v": 1,
+  "alg": "RSA-OAEP+AES-256-GCM",
+  "ek": "<base64 RSA-wrapped AES key>",
+  "iv": "<base64>",
+  "encrypted_chunks": ["<base64 ciphertext>"]
+}
 ```
 
-分块（明文超过约 190 字节时）：
-```json
-{ "encrypted_chunks": ["<base64>", "<base64>", "..."] }
-```
-
-服务端与 Local Agent `shared/server_center` 均支持单块与分块互操作。
+仍接受旧版纯 RSA 单块 `{ "encrypted": "..." }` 与 `encrypted_chunks` 分块，便于回滚。开关：`SC_WIRE_ENCRYPT` / `LA_WIRE_ENCRYPT`。
 
 ### 输出（服务端 → 查询方 / Web UI）
 
@@ -233,7 +237,7 @@ resp = requests.post(
 print(resp.json())
 ```
 
-> RSA 单次加密有长度上限（2048 位密钥约 190 字节明文）。消息较大时请拆分 `payload` 或后续改用 RSA+AES 混合加密。
+> 上例为旧版纯 RSA，仅适合短消息。生产路径请用 Local Agent `shared.server_center` 客户端（混合加密，无 190 字节上限）。
 
 ### 3. 注册客户端公钥（拉取加密回复）
 
@@ -265,11 +269,13 @@ GET /api/v1/messages?name=安全检查模块&status=pending&encrypted_for=安全
 
 与发送消息相同：将 `ResponseBody` JSON 序列化 → 服务端公钥加密 → `POST /api/v1/messages/{ref_id}/respond`。
 
-### 6. WebSocket 订阅（明文，供 UI 或内网客户端）
+### 6. WebSocket 订阅
 
 ```
 ws://your-server:8765/ws/{target}
 ```
+
+`user_ui` 给浏览器明文；模块频道在 `SC_WIRE_ENCRYPT=true` 时推送 `enc` 密文。终端：`/ws/terminal`（UI）、`/ws/terminal_agent`（Local Agent）。
 
 事件：
 
@@ -301,11 +307,16 @@ ws://your-server:8765/ws/{target}
 | GET | `/api/v1/messages` | 查询消息列表 |
 | GET | `/api/v1/messages/{id}` | 单条消息 |
 | POST | `/api/v1/messages/{id}/respond` | 加密回复 |
-| GET | `/api/v1/modules` | 已注册模块列表 |
+| GET | `/api/v1/modules` | 已注册核心模块列表 |
 | GET | `/api/v1/modules/{id}` | 单个模块元数据 |
 | POST | `/api/v1/messages/local` | 明文发送（Web UI） |
 | POST | `/api/v1/messages/{id}/respond/local` | 明文回复（Web UI） |
 | POST | `/api/v1/clients/register` | 注册客户端公钥 |
+| GET | `/api/v1/extensions` | 代理 Local 已安装扩展 |
+| POST | `/api/v1/extensions/install` | 上传 `.hamod` 转发安装 |
+| DELETE | `/api/v1/extensions/{id}` | 卸载扩展 |
+| GET / PUT | `/api/v1/extensions/{id}/settings` | 扩展配置 |
+| GET | `/api/v1/terminal/status` | 终端中继状态 |
 | WS | `/ws/{target}` | 实时推送 |
 
 查询参数（`GET /messages`）：
@@ -321,21 +332,26 @@ ws://your-server:8765/ws/{target}
 
 ## 已注册模块
 
-服务端与前端均已注册以下模块（含未开发的占位模块）。各模块推送消息时，`name` 使用下表「发送名」之一，`target` 固定为 `user_ui`。
+服务端 `app/modules.py` 与前端 `frontend/src/config/agents.js` 同步核心频道。各模块推送消息时，`name` 使用下表「发送名」之一，`target` 固定为 `user_ui`。
+
+已安装扩展（crawler / paper 等）由 Local Agent `/extensions` 列表动态出现在侧栏；前端对 crawler 保留专用工作台，其余扩展用通用面板。
 
 | 模块 ID | 显示名 | 发送名（name 字段） | 常用 msg_type |
 |---------|--------|---------------------|---------------|
-| `main` | 主对话 | `main` / `主对话` | `text` / `tool_result` |
+| `main` | 主对话 | `main` / `主对话` | `text` / `tool_result` / 规划与工具富消息 |
 | `conversation_manager` | 会话管理 | `会话管理` / `conversation_manager` | `cm_snapshot` / `cm_event` |
-| `planning` | 规划 | `规划模块` / `planning` | `plan_result` |
+| `planning` | 规划 | `规划模块` / `planning` | `plan_result` / `clarify_result` / `graph_run_result` |
 | `emotion` | 情感与性格状态 | `情感与性格状态模块` / `emotion` | `mind_snapshot` / `persona_state` |
-| `security` | 安全检查 | `安全检查模块` / `security` | `approval_request` |
-| `env` | 环境感知 | `环境感知模块` / `env_sense` | `system_status` |
-| `memory` | 长期记忆 | `长期记忆模块` / `memory` | `memory_record` |
-| `crawler` | 网页爬取 | `网页爬取模块` / `crawler` | `execution_log` |
+| `security` | 安全检查 | `安全检查模块` / `security` | `approval_request` / `security_yellow_log` |
+| `env` | 环境感知 | `环境感知模块` / `env_sense` | `system_status` / `desktop_screenshot` / `camera_capture` |
+| `memory` | 记忆 | `记忆模块` / `memory` | `memory_record` |
+| `crawler` | 网页爬取（扩展） | `网页爬取模块` / `crawler` | `execution_log` |
 | `rag` | RAG | `RAG模块` / `rag` | `rag_result` |
 | `executor` | 执行 | `执行模块` / `executor` | `execution_log` |
 | `processor` | 处理 | `处理` / `processor` | `datablock` |
+| `llm` | 模型配置 | `本地Agent` / `llm` | `llm_config_result` |
+| `extensions` | 扩展管理 | `扩展管理` | —（前端工作台，代理 Local HTTP） |
+| `terminal` | 远程终端 | `远程终端` | PTY WebSocket |
 
 查询模块元数据：`GET /api/v1/modules`
 
@@ -371,7 +387,7 @@ ws://your-server:8765/ws/{target}
 - **桌面端**：左侧 300px 智能体列表 + 右侧对话工作区（消息流 + 输入框）。
 - **移动端**（Tailwind `md:` 断点）：首屏仅列表，点击进入对话，左上角返回。
 
-左侧列表项包含：模块名称、最后消息摘要、⚪闲置 / 🔵工作中、`system_status` 除外未读红点；安全检查模块待审批显示红色圆点。
+左侧列表项包含：模块名称、最后消息摘要、⚪闲置 / 🔵工作中、`system_status` 除外未读红点；安全检查模块待审批显示红色圆点。已安装扩展动态插入列表；「扩展管理」打开 `ExtensionsWorkspace.vue`（上传 `.hamod` / 卸载 / 配置）。
 
 ### 消息类型与 UI 映射
 
@@ -379,8 +395,10 @@ ws://your-server:8765/ws/{target}
 
 | msg_type | UI 组件 | 说明 |
 |----------|---------|------|
-| `text` | `TextBubble.vue` | 聊天气泡；`name=user_ui` 或 `message.role=user` 靠右（靛蓝），否则靠左（深灰） |
+| `text` / `tool_result` | `TextBubble.vue` | 聊天气泡；`name=user_ui` 或 `message.role=user` 靠右（靛蓝），否则靠左（深灰） |
 | `approval_request` | `ApprovalCard.vue` | 通宽警告卡片，高亮命令代码，批准/拒绝按钮 |
+| `clarify_request` | `ClarifyCard.vue` | 规划质询：问题与环境探测待确认 |
+| `planning_session` | `PlanningSessionCard.vue` | 主对话内规划会话卡片 |
 | `execution_log` | `ExecutionLog.vue` | 可折叠手风琴，展开为黑底绿字控制台 |
 | `system_status` | `SystemStatus.vue` | 环境指标卡片；`alert=true` 时左侧红灯 |
 | `desktop_screenshot` | `DesktopScreenshot.vue` | 远程桌面截图预览 |
@@ -391,6 +409,8 @@ ws://your-server:8765/ws/{target}
 | `plan_result` | `PlanResult.vue` | 任务规划：目标 / TaskGraph 节点 / 状态（兼容旧 steps） |
 | `datablock` | `DataBlockResult.vue` | 处理：要求 / 输出块 / 错误 |
 | `memory_record` | `MemoryRecord.vue` | 记忆键与摘要 |
+| `cm_snapshot` / `cm_event` | 会话管理工作台 | 规则命中、State、Open Tasks；**不触发**未读 |
+| `security_lists_result` | 安全规则配置 | 四列表读写结果 |
 
 ### 各类型 message 字段约定
 

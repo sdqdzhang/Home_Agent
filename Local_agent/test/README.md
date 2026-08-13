@@ -1,6 +1,6 @@
 # Local Agent 测试程序
 
-各模块的简易图形界面测试（Python 内置 `tkinter`，无额外 UI 库）。
+各模块的简易图形界面测试（Python 内置 `tkinter`，无额外 UI 库），以及若干无 UI 的单元测试。
 
 ## 运行前
 
@@ -11,15 +11,17 @@ cd Local_agent
 pip install -r requirements.txt
 ```
 
-## 测试程序
+## 图形测试
 
 | 脚本 | 说明 | 依赖 |
 |------|------|------|
 | `test_llm_gui.py` | 测试 `shared/llm` OpenAI 兼容调用 | Ollama 运行中 |
-| `test_crawler_gui.py` | 测试爬取（可切换是否使用模型） | 无模型模式仅需网络 |
+| `test_llm_registry_gui.py` | LLM 端点 / 槽位绑定可视化 | `data/llm.db` |
+| `test_crawler_gui.py` | 测试爬取（可切换是否使用模型） | 已安装 crawler 扩展；无模型模式仅需网络 |
 | `test_env_gui.py` | 测试环境感知（含 Server 地址、测试连接、推送） | 推送需 Server Center 运行 |
-| `test_rag_gui.py` | RAG 入库（规则/语义分块）、问答、向量库浏览与删除 | 语义分块需 `qwen2.5:3b` |
+| `test_rag_gui.py` | RAG 入库（四种分块）、问答、向量库浏览与删除 | 语义分块需 `qwen2.5:3b` |
 | `test_security_gui.py` | 安全检查：绿/红/黄命令、Server Center 审批 | Server Center + 黄色需 Ollama |
+| `test_memory_gui.py` | 记忆：观察 / 召回 / 反思 / 核心记忆 | Ollama（打分/标签/嵌入） |
 | `test_executor_gui.py` | 执行模块：默认自动路由；**内嵌安检**（挂到 `app.main.security_service`） | Ollama（route/parse）；红灯审批需 Server Center |
 | `test_processor_gui.py` | 处理模块：要求 + DataBlock 列表 → 产出一个 DataBlock（左右分栏） | Ollama（`processor.process` 槽位） |
 | `test_storage_gui.py` | **日志与记录清理**：查看/删除各模块 DB、日志、向量库、截图等 | 无（建议停止 Agent 后再清理） |
@@ -29,10 +31,12 @@ pip install -r requirements.txt
 ```bash
 # 在 Local_agent 目录下
 python test/test_llm_gui.py
+python test/test_llm_registry_gui.py
 python test/test_crawler_gui.py
 python test/test_env_gui.py
 python test/test_rag_gui.py
 python test/test_security_gui.py
+python test/test_memory_gui.py
 python test/test_executor_gui.py
 python test/test_processor_gui.py
 python test/test_storage_gui.py
@@ -41,22 +45,45 @@ python test/test_storage_gui.py
 Windows 也可双击：
 
 - `test/run_llm.bat`
+- `test/run_llm_registry_gui.bat`
 - `test/run_crawler.bat`
 - `test/run_env.bat`
 - `test/run_rag.bat`
 - `test/run_security_gui.bat`
+- `test/run_memory_gui.bat`
 - `test/run_executor_gui.bat`
 - `test/run_processor_gui.bat`
 - `test/run_storage_gui.bat`
 
+## 单元测试（无 UI）
+
+| 脚本 | 覆盖 |
+|------|------|
+| `test_emotion_persona_resolver.py` | Mind Resolver 意图 / visibility / 预算裁剪 |
+| `test_executor_mode_router.py` | 执行子能力路由 |
+| `test_executor_capabilities.py` | 文件/命令子能力 |
+| `test_executor_command_validate.py` | 命令校验 |
+| `test_executor_content_extract.py` | 附件/代码块提取 |
+| `test_executor_decode.py` | 执行输出解码 |
+| `test_llm_json_parse.py` / `test_llm_dsml.py` | LLM JSON / DSML 解析 |
+| `test_llm_registry.py` / `test_llm_config_service.py` | 槽位注册表与配置服务 |
+
+```bash
+python test/test_emotion_persona_resolver.py
+```
+
+Mind 主对话联调另见仓库根目录 [emotion_test/README.md](../../emotion_test/README.md)。
+
 ## 爬取：使用模型 vs 不使用模型
+
+crawler 已是扩展：先安装 `.hamod`（或确认 `extensions/crawler` 已加载），再跑 GUI。
 
 | 阶段 | 不使用模型 | 使用模型 |
 |------|-----------|----------|
 | 引擎选择 | 自适应路由（feedparser / httpx+BS4 / Playwright） | 相同 |
 | 成功判定 | 引擎返回 `success`（有正文/条目即成功） | **LLM** 根据任务描述判断 |
 | 失败重试 | 换下一个引擎 | **LLM** 调参后重试（最多 3 轮） |
-| 过滤 | 4 种预设过滤器 | 相同 |
+| 过滤 | 预设过滤器 | 相同 |
 | 结果选取 | **最高分**过滤器 | **LLM** 择优；不行则 LLM 自行提炼 |
 
 建议测试顺序：
@@ -85,3 +112,4 @@ Windows 也可双击：
 | `CERTIFICATE_VERIFY_FAILED` / `certificate has expired` | 目标站 HTTPS 证书过期或无效 | 勾选「忽略 SSL 证书错误」，或等无模型模式自动 SSL 重试 |
 | `Executable doesn't exist` / `playwright install` | Playwright 浏览器未下载 | `playwright install chromium` |
 | 仅 Playwright 失败、httpx 已成功 | 静态页不需要 Playwright | 正常，前两个引擎成功即可 |
+| 爬取 GUI 报模块未启动 | crawler 扩展未安装/未加载 | Web UI「扩展管理」安装后再测 |

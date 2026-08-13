@@ -14,6 +14,7 @@ Web UI：Server Center「规划」频道工作台（质询 / 环境探测 / 画�
 | 拓扑执行 `run_graph` | ✅ |
 | `app/main` + Server Center / WS | ✅ |
 | Web UI 工作台 | ✅（Server Center frontend） |
+| 主对话黑盒 `run_task` | ✅（质询进 main 时间线） |
 | HTTP router | ❌（走消息通道 + local_bus） |
 
 ## 原则
@@ -56,7 +57,10 @@ Web UI：Server Center「规划」频道工作台（质询 / 环境探测 / 画�
 
 ```python
 from shared.local_bus import call
-from modules.planning.schemas import PlanRequest
+from modules.planning.schemas import PlanRequest, ClarifyRequest
 
+clarify = await call("planning", "clarify", ClarifyRequest(goal="…"))
 outcome = await call("planning", "plan", PlanRequest(goal="…"))
 ```
+
+原子方法：`clarify` / `run_env_query` / `plan` / `run_graph`。主对话走 `run_task`（黑盒）。

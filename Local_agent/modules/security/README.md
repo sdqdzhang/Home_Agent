@@ -1,6 +1,6 @@
 # 安全检查模块
 
-命令风险判定：规则（四列表）+ 黄色模型升红 + 红色用户审批。
+命令风险判定：规则（四列表）+ 黄色模型升红 + 红色用户审批。执行模块经 `local_bus` 调用本模块后再落地动作。
 
 ## 四列表文件位置
 
@@ -26,6 +26,7 @@
 | GET | `/security/records/yellow` | 黄色记录 |
 | GET | `/security/records/approvals` | 审批记录 |
 | POST | `/security/chat` | 对话 |
+| POST | `/security/auto-approve` | 模型自动审批（`approval_id` 或 `all=true`） |
 | POST | `/security/reload-lists` | 重新加载四列表 |
 
 ### Web UI 规则配置（经 Server Center）

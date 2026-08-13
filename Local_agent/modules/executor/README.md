@@ -19,6 +19,7 @@ HomeAgent **行动层**：将明确动作落地处理，不负责规划、决策
 - `mode` 缺省：LLM 先路由到子能力，再走该子能力原有解析/执行链（两阶段）
 - `mode` 显式传入：跳过路由，强制该子能力（调试用）
 - `file_content`：附件正文，**不送入**路由 LLM / 解析 LLM；有附件时必须路由到 `write_file`，否则 `not_executable`
+- `ui_msg_id`：调用方可传入已有 UI 卡片 id，执行过程原地更新
 
 ## 子能力（`mode`）
 
@@ -36,6 +37,7 @@ HomeAgent **行动层**：将明确动作落地处理，不负责规划、决策
 - 附件正文不进 LLM；有附件时模型只解析目标路径（及可选行范围）
 - 有附件却未判定为 `write_file`（含用 shell 写文件）→ 错误
 - 可选 `start_line`/`end_line`（1-based 闭区间）：只替换该区间与文件行数的交集；起始行超过文件末尾则在末尾追加；未指定则整文件覆盖
+
 ## 核心流程
 
 ```
@@ -82,6 +84,8 @@ result = await call(
 | POST | `/executor/chat` | 对话式（`mode` 可选） |
 | GET | `/executor/jobs` | 任务列表 |
 | GET | `/executor/jobs/{id}` | 任务详情 |
+| POST | `/executor/jobs/{id}/cancel` | 取消指定任务 |
+| POST | `/executor/jobs/cancel` | 取消最近任务 |
 
 ## LLM 槽位
 
@@ -109,11 +113,15 @@ result = await call(
 
 ```
 modules/executor/
-  mode_router.py   # 子能力自动路由
+  mode_router.py          # 子能力自动路由
   capabilities/
-    command/       # 命令执行
-    files/         # 文件类子能力
-  service.py       # 路由与 Web UI
-  schemas.py       # 统一入参/出参
-  runner.py        # shell / 文件 IO
+    command/              # 命令执行
+    files/                # 文件类子能力
+    parse_assistant.py    # 共用 JSON 解析
+    secured.py            # 安检包装
+  service.py              # 路由与 Web UI
+  schemas.py              # 统一入参/出参
+  runner.py               # shell IO
+  file_ops.py             # 文件 IO
+  command_validate.py     # 命令校验
 ```

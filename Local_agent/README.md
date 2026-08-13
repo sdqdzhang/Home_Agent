@@ -1,6 +1,6 @@
 # Local Agent
 
-HomeAgent 本地智能体服务：单进程托管多个功能模块，通过 RSA 加密 HTTP 与 WebSocket 与 Server Center 通信。主对话以 Function Calling 编排规划/执行/RAG/环境/爬取；经安全门禁落地本机动作，并配套记忆、会话状态与远程终端。
+HomeAgent 本地智能体服务：单进程托管核心模块，并通过扩展加载器按安装态挂载 `.hamod` 能力。与 Server Center 走 RSA-OAEP + AES-256-GCM 混合加密 HTTP / WebSocket。主对话以 Function Calling 编排规划/执行/RAG/环境及已加载扩展；经安全门禁落地本机动作，并配套记忆、会话状态与远程终端。
 
 **版本**：`0.2.0`（`app/main.py`）
 
@@ -10,20 +10,21 @@ HomeAgent 本地智能体服务：单进程托管多个功能模块，通过 RSA
 flowchart TB
     subgraph UI["Server Center / Web UI"]
         SC[Server Center :8765]
-        UI[Web UI 各频道]
+        WEB[Web UI 各频道]
     end
 
     subgraph LA["Local Agent :8770"]
         APP[app/main.py]
         BUS[shared/local_bus]
         LLM[shared/llm 注册表]
+        EXT[shared/extensions loader]
         TERM[terminal/bridge PTY]
 
-        subgraph MOD["功能模块"]
+        subgraph CORE["核心模块 modules/"]
             MAIN[main]
             CM[conversation_manager]
+            EMO[emotion]
             PL[planning]
-            CR[crawler]
             EN[env]
             RG[rag]
             SEC[security]
@@ -31,34 +32,45 @@ flowchart TB
             EX[executor]
             PR[processor]
         end
+
+        subgraph PACK["扩展 extensions/"]
+            CR[crawler]
+            PA[paper]
+        end
     end
 
-    SC <-->|RSA HTTP + WS| APP
-    UI <-->|消息频道| SC
-    APP --> MOD
-    MOD --> BUS
-    BUS -->|进程内直调| MOD
-    MOD --> LLM
+    SC <-->|混合加密 HTTP + WS| APP
+    WEB <-->|消息频道| SC
+    APP --> CORE
+    APP --> EXT
+    EXT --> PACK
+    CORE --> BUS
+    PACK --> BUS
+    BUS -->|进程内直调| CORE
+    BUS -->|进程内直调| PACK
+    CORE --> LLM
+    PACK --> LLM
     TERM <-->|/ws/terminal_agent| SC
 ```
 
 | 模块 | ID | 职责 |
 |------|-----|------|
-| 主对话 | `main` | 聊天 + Function Calling 编排；调用 planning / executor / rag / env / crawler |
-| 会话管理 | `conversation_manager` | 程序驱动 State / Analyzer / Open Tasks；向 main 注入上下文；记忆候选写入 memory |
-| 情感与状态（Mind） | `emotion` | 情绪连续性与 Mind Context；规则触发 `mind.analyze`；推送 `persona_state` |
-| 规划 | `planning` | 质询/环境探测 → 静态 TaskGraph → 拓扑并发执行；主对话黑盒桥接 + Web 工作台 |
+| 主对话 | `main` | 聊天 + Function Calling；core 工具 ∪ 已加载扩展 TOOLS |
+| 会话管理 | `conversation_manager` | 程序驱动 State / Analyzer / Open Tasks；记忆候选写入 memory |
+| 情感与状态（Mind） | `emotion` | 情绪连续性与 Mind Context；规则触发 `mind.analyze`；推送 `persona_state` / `mind_snapshot` |
+| 规划 | `planning` | 质询/环境探测 → 静态 TaskGraph → 拓扑执行 |
 | 执行 | `executor` | 自然语言自动路由子能力 → 安检 → 执行（命令 / 文件） |
 | 处理 | `processor` | 要求 + DataBlock 上下文 → 产出一个 DataBlock（供规划 Process 节点） |
 | 安全检查 | `security` | 四列表规则、黄/红审批、模型升红与自动审批 |
 | RAG | `rag` | Chroma 向量库、多策略分块、检索问答 |
 | 记忆 | `memory` | 观察打分、工作记忆、向量归档、三维检索、反思 |
 | 环境感知 | `env` | 周期采集、窗口压缩总结、告警、截图/摄像头 |
-| 网页爬取 | `crawler` | 自适应引擎爬取、过滤、模型判断与对话 |
 | LLM 配置 | `llm` / `local_agent` | SQLite 端点与槽位绑定，供 Web UI 管理 |
 | 远程终端 | — | Web 端 PTY 桥接（不经 AI 与安全检查） |
+| 网页爬取（扩展） | `crawler` | `.hamod`：自适应引擎爬取、过滤、模型判断；FC `crawler_fetch` |
+| 论文工具（扩展） | `paper` | `.hamod`：搜索 / 元数据 / OA / 下载 / 引用 |
 
-模块间同步调用走 `shared.local_bus`；需 UI 展示或审批留痕时走 `ServerCenterClient`。约定见 [docs/module-communication.md](docs/module-communication.md)。
+核心模块启动时由 `app/main.py` 固定挂载；扩展由 `shared.extensions.loader` 按 `extensions/installed.json` 加载。模块间同步调用走 `shared.local_bus`；需 UI 展示或审批留痕时走 `ServerCenterClient`。约定见 [docs/module-communication.md](docs/module-communication.md)。
 
 ## 目录结构
 
@@ -69,28 +81,35 @@ Local_agent/
 │   ├── config.py
 │   └── server_client/
 ├── shared/
-│   ├── llm/                    # OpenAI 兼容客户端 + SQLite 注册表
-│   ├── server_center/          # RSA 加密消息 + WebSocket 监听
-│   └── local_bus.py            # 模块进程内互调门面
-├── modules/
-│   ├── crawler/                # 网页爬取
+│   ├── llm/                    # OpenAI 兼容客户端 + SQLite 注册表 + 动态槽
+│   ├── server_center/          # 混合加密消息 + WebSocket 监听
+│   ├── extensions/             # 扩展契约 / 安装 / 加载 / HTTP
+│   └── local_bus.py            # 模块进程内互调门面（core + 扩展）
+├── modules/                    # 核心模块（不可卸载）
 │   ├── env/                    # 环境感知
 │   ├── rag/                    # RAG 检索增强
-│   ├── security/             # 安全检查（lists/ 四列表配置）
+│   ├── security/               # 安全检查（lists/ 四列表配置）
 │   ├── memory/                 # 长期记忆
 │   ├── executor/               # 执行（command / 文件操作）
 │   ├── processor/              # 处理（要求 + DataBlock → DataBlock）
 │   ├── terminal/               # 远程终端 PTY 桥
-│   ├── planning/               # 规划（TaskGraph；见 INTEGRATION.md）
+│   ├── planning/               # 规划（TaskGraph）
 │   ├── main/                   # 主对话（FC 编排）
-│   ├── conversation_manager/   # 会话管理（规则 + Analyzer + 记忆候选）
-│   └── emotion/                # 心智与状态（Mind Context + 情绪）
+│   ├── conversation_manager/   # 会话管理
+│   └── emotion/                # 心智与状态
+├── extension_packages/         # 扩展开发树（仅打包；运行时不加载）
+│   ├── crawler/
+│   └── paper/
+├── extensions/                 # 已安装扩展代码 + installed.json（运行时）
 ├── docs/
 │   ├── module-communication.md
-│   └── main-conversation.md    # 主对话 / Manager 设计与落地状态
+│   ├── main-conversation.md
+│   ├── extension-contract.md
+│   ├── extension-author-guide.md
+│   └── extension-packaging.md
 ├── data/                       # 运行时数据（勿提交）
 ├── keys/                       # 客户端 RSA 密钥（勿提交）
-├── test/                       # tkinter 图形测试（见 test/README.md）
+├── test/                       # tkinter 图形测试与单元测试
 ├── requirements.txt
 └── .env.example
 ```
@@ -107,7 +126,7 @@ python -m venv .venv
 source .venv/bin/activate
 
 pip install -r requirements.txt
-playwright install chromium   # 可选，动态页面爬取
+playwright install chromium   # 可选，动态页面爬取（crawler 扩展）
 
 cp .env.example .env
 # 编辑 .env：Server Center 地址、Ollama 模型等
@@ -119,12 +138,15 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8770
 
 - Server Center 已在 `8765` 运行（联调可用仓库根目录 `联调启动.bat`）
 - Ollama 已拉取所需模型（如 `llama3.2`、`nomic-embed-text`、`qwen2.5:3b`）
+- 网页爬取 / 论文工具需先安装对应 `.hamod`（Web UI「扩展管理」或 `python -m shared.extensions install …`）
 
 健康检查：
 
 ```bash
 curl http://127.0.0.1:8770/health
 ```
+
+返回 `modules`（core + 已加载扩展）、`extensions`、`registered`。
 
 ## 本地 API（调试）
 
@@ -134,21 +156,19 @@ HTTP 路由仅供 curl / GUI 调试；**模块互调禁止走 `:8770` HTTP**。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/health` | 各模块与终端桥接状态 |
+| GET | `/health` | 各模块、扩展与终端桥接状态 |
 
-### 网页爬取 `/crawler`
+### 扩展管理 `/extensions`
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/crawl` | 提交爬取任务 |
-| POST | `/chat` | 带记忆的模块对话 |
-| GET | `/jobs` | 任务列表 |
-| GET | `/jobs/{id}` | 单任务详情 |
-| GET | `/jobs/{id}/log` | 任务日志 |
-| GET | `/artifacts` | 产物列表 |
-| GET | `/artifacts/{filename}` | 下载产物 |
+| GET | `/extensions` | 已安装扩展列表 |
+| POST | `/extensions/install` | 上传 `.hamod` 安装 |
+| DELETE | `/extensions/{id}` | 卸载 |
+| GET / PUT | `/extensions/{id}/settings` | 扩展配置 |
+| POST | `/extensions/{id}/settings/reset` | 重置配置 |
 
-爬取流水线：自适应引擎（feedparser / httpx+BS4 / Playwright）→ 成功判定 → 失败调参重试 → 四种预设过滤 → 模型择优或兜底提炼。
+契约与作者指南：[docs/extension-contract.md](docs/extension-contract.md)、[docs/extension-author-guide.md](docs/extension-author-guide.md)。
 
 ### 环境感知 `/env`
 
@@ -160,6 +180,8 @@ HTTP 路由仅供 curl / GUI 调试；**模块互调禁止走 `:8770` HTTP**。
 | POST | `/screenshot` | 桌面截图 |
 | POST | `/camera` | 摄像头采集 |
 | POST | `/chat` | 基于系统状态问答 |
+
+详见 [modules/env/README.md](modules/env/README.md)。
 
 ### RAG `/rag`
 
@@ -175,7 +197,7 @@ HTTP 路由仅供 curl / GUI 调试；**模块互调禁止走 `:8770` HTTP**。
 | POST | `/delete/document` | 删除文档 |
 | POST | `/delete/collection` | 清空集合 |
 
-分块策略：`rule` / `semantic` / `semantic_embedding` / `structural`（见 `LA_RAG_SPLIT_MODE`）。
+分块策略：`rule` / `semantic` / `semantic_embedding` / `structural`（见 `LA_RAG_SPLIT_MODE`）。详见 [modules/rag/README.md](modules/rag/README.md)。
 
 ### 安全检查 `/security`
 
@@ -191,7 +213,7 @@ HTTP 路由仅供 curl / GUI 调试；**模块互调禁止走 `:8770` HTTP**。
 | GET | `/lists` | 读取四列表 |
 | PUT | `/lists/{list_key}` | 更新列表 |
 
-四列表文件：`modules/security/lists/*.txt`。执行模块对接见 [modules/security/INTEGRATION.md](modules/security/INTEGRATION.md)。
+四列表文件：`modules/security/lists/*.txt`。对接见 [modules/security/INTEGRATION.md](modules/security/INTEGRATION.md)。
 
 ### 记忆 `/memory`
 
@@ -207,6 +229,8 @@ HTTP 路由仅供 curl / GUI 调试；**模块互调禁止走 `:8770` HTTP**。
 | POST | `/core` | 写入核心记忆 |
 | DELETE | `/core/{key}` | 删除核心记忆 |
 
+详见 [modules/memory/README.md](modules/memory/README.md)。
+
 ### 执行 `/executor`
 
 | 方法 | 路径 | 说明 |
@@ -216,7 +240,7 @@ HTTP 路由仅供 curl / GUI 调试；**模块互调禁止走 `:8770` HTTP**。
 | GET | `/jobs` | 任务列表 |
 | GET | `/jobs/{id}` | 单任务详情 |
 | POST | `/jobs/{id}/cancel` | 取消任务 |
-| POST | `/jobs/cancel` | 批量取消 |
+| POST | `/jobs/cancel` | 取消最近任务 |
 
 缺省只传自然语言；LLM 先选子能力（`command` / 文件类），再解析执行。`mode` 显式传入时可强制子能力。有 `file_content` 附件时必须走 `write_file`，附件正文不进 LLM。
 
@@ -232,21 +256,60 @@ result = await call("executor", "execute", ExecuteRequest(
 
 详见 [modules/executor/README.md](modules/executor/README.md)。
 
+### 处理 `/processor`
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/process` | 要求 + DataBlock 列表 → 一个 DataBlock |
+| GET | `/health` | 模块状态 |
+
+规划 `process` 节点经 `local_bus` 调用，不对 main FC 开放。详见 [modules/processor/README.md](modules/processor/README.md)。
+
+### 规划 / 主对话 / 会话 / Mind
+
+无独立 HTTP router。走 Server Center 消息通道 + `local_bus`。
+
+- [modules/planning/README.md](modules/planning/README.md)
+- [modules/main/README.md](modules/main/README.md)
+- [modules/conversation_manager/README.md](modules/conversation_manager/README.md)
+- [modules/emotion/README.md](modules/emotion/README.md)
+
+### 网页爬取 `/crawler`（扩展已安装时）
+
+由扩展 `manifest.http.router` 挂载，不是核心路由。
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/crawl` | 提交爬取任务 |
+| POST | `/crawl/batch` | 多 URL 并行入队 |
+| POST | `/chat` | 带记忆的模块对话 |
+| GET | `/jobs` | 任务列表 |
+| GET | `/jobs/{id}` | 单任务详情 |
+| GET | `/jobs/{id}/log` | 任务日志 |
+| GET | `/artifacts` | 产物列表 |
+| GET | `/texts` | 导出正文列表 |
+
+流水线：自适应引擎（feedparser / httpx+BS4 / Playwright）→ 成功判定 → 失败调参重试 → 预设过滤 → 模型择优或兜底提炼。
+
 ## 与 Server Center 集成
 
-各模块启动时向 Server Center 注册，并通过 WebSocket 频道接收 `text` 等消息；执行过程以 RSA 加密推送到 `user_ui`。
+各模块启动时向 Server Center 注册，并通过 WebSocket 频道接收 `text` 等消息；执行过程以混合加密推送到 `user_ui`。
 
 | 模块 | 发送名 / ID | 主要 `msg_type` | 文档 |
 |------|-------------|-----------------|------|
-| 网页爬取 | `网页爬取模块` / `crawler` | `execution_log` | — |
-| 环境感知 | `环境感知模块` / `env` | `system_status`、`desktop_screenshot` | [modules/env/README.md](modules/env/README.md) |
+| 主对话 | `主对话` / `main` | `text`、`tool_result`、规划/执行富消息 | [modules/main/README.md](modules/main/README.md) |
+| 会话管理 | `会话管理` / `conversation_manager` | `cm_snapshot` | [modules/conversation_manager/README.md](modules/conversation_manager/README.md) |
+| 情感与状态 | `情感与性格状态模块` / `emotion` | `persona_state`、`mind_snapshot` | [modules/emotion/README.md](modules/emotion/README.md) |
+| 环境感知 | `环境感知模块` / `env` | `system_status`、`desktop_screenshot`、`camera_capture` | [modules/env/README.md](modules/env/README.md) |
 | RAG | `RAG模块` / `rag` | `rag_result`、`execution_log` | [modules/rag/README.md](modules/rag/README.md) |
 | 安全检查 | `安全检查模块` / `security` | `approval_request`、`security_yellow_log`、`text` | [modules/security/README.md](modules/security/README.md) |
-| 记忆 | `记忆模块` / `memory` | `memory_record`、`text` | — |
+| 记忆 | `记忆模块` / `memory` | `memory_record`、`text` | [modules/memory/README.md](modules/memory/README.md) |
 | 执行 | `执行模块` / `executor` | `execution_log` | [modules/executor/README.md](modules/executor/README.md) |
+| 处理 | `处理` / `processor` | `datablock` | [modules/processor/README.md](modules/processor/README.md) |
+| 规划 | `规划模块` / `planning` | `plan_result`、`text` | [modules/planning/README.md](modules/planning/README.md) |
 | LLM 配置 | `本地Agent` / `local_agent` | `llm_config_result` | 下文 |
-| 规划 | `规划模块` / `planning` | `plan_result`、`text` | [modules/planning/README.md](modules/planning/README.md) · [INTEGRATION.md](modules/planning/INTEGRATION.md) |
-| 情感与状态 | `情感与性格状态模块` / `emotion` | `persona_state` | [modules/emotion/README.md](modules/emotion/README.md) |
+| 网页爬取（扩展） | `网页爬取模块` / `crawler` | `execution_log` | 扩展契约 |
+| 论文工具（扩展） | `论文工具模块` / `paper` | `execution_log` | 扩展契约 |
 | 远程终端 | — | WebSocket `/ws/terminal_agent` | `LA_TERMINAL_ENABLED` |
 
 **推送联调示例**（环境感知）：
@@ -270,19 +333,23 @@ result = await call("executor", "execute", ExecuteRequest(
 
 ### 槽位一览
 
+Core 静态槽在 `shared/llm/slots.py`。扩展槽由 `manifest.llm_slots` 动态注册，与 core 合并后对配置 UI 可见。
+
 | slot_key | 模块 | 用途 |
 |----------|------|------|
 | `default.chat` | shared | 未绑定槽位的 chat 回退 |
 | `rag.summarize` / `rag.split` / `rag.embed` | rag | 问答总结 / 语义分块 / 向量化 |
-| `crawler.pipeline` / `crawler.chat` | crawler | 爬取流水线 / 对话 |
 | `env.summary` / `env.chat` | env | 周期总结 / 问答 |
 | `security.judge` / `security.chat` / `security.auto_approve` | security | 升红判定 / 对话 / 自动审批 |
 | `memory.assess` / `memory.reflect` / `memory.summarize` / `memory.tag` / `memory.embed` | memory | 打分 / 反思 / 对话总结 / 标签 / 向量化 |
 | `executor.route` / `executor.parse` | executor | 子能力路由 / 动作解析 |
+| `processor.process` | processor | DataBlock 生成 |
 | `planning.clarify` / `planning.plan` | planning | 质询 / 出图 |
 | `main.chat` | main | 主对话 Function Calling |
 | `conversation.analyze` | conversation_manager | Analyzer 更新 State / 记忆候选 |
 | `mind.analyze` / `mind.advisor` | emotion | 轮后状态分析 / 轮前人格回应指导 |
+| `crawler.pipeline` / `crawler.chat` | crawler（扩展） | 爬取流水线 / 对话 |
+| `paper.chat` | paper（扩展） | 论文检索与元数据理解 |
 
 ### 代码调用
 
@@ -321,9 +388,9 @@ Server Center 左侧 **模型配置** 经 `POST /api/v1/messages/local`（`targe
 | `LA_HOST` | `127.0.0.1` | 监听地址 |
 | `LA_PORT` | `8770` | 本地服务端口 |
 | `LA_SERVER_CENTER_URL` | `http://127.0.0.1:8765` | Server Center |
+| `LA_WIRE_ENCRYPT` | `true` | 与 Server `SC_WIRE_ENCRYPT` 保持一致 |
 | `LA_LLM_BASE_URL` | `http://127.0.0.1:11434/v1` | Ollama OpenAI 端点（seed / fallback） |
 | `LA_LLM_MODEL` | `llama3.2` | 默认 chat 模型 |
-| `LA_CRAWLER_MAX_RETRIES` | `3` | 爬取重试次数 |
 | `LA_ENV_COLLECT_INTERVAL_SECONDS` | `20` | 环境采集间隔 |
 | `LA_ENV_SUMMARY_INTERVAL_SECONDS` | `600` | LLM 总结间隔 |
 | `LA_RAG_SPLIT_MODE` | `rule` | 分块策略 |
@@ -331,6 +398,8 @@ Server Center 左侧 **模型配置** 经 `POST /api/v1/messages/local`（`targe
 | `LA_SECURITY_APPROVAL_TIMEOUT_SECONDS` | `300` | 审批超时 |
 | `LA_EXECUTOR_DEFAULT_CWD` | Local_agent 根 | 执行默认工作目录 |
 | `LA_TERMINAL_ENABLED` | `true` | 远程终端桥接 |
+| `LA_EMOTION_ENABLED` | `false` | Mind 总开关（工作台可覆盖） |
+| `LA_EMOTION_PERSONA` | `default` | 默认人格 id |
 
 完整列表见 [.env.example](.env.example)。
 
@@ -339,11 +408,15 @@ Server Center 左侧 **模型配置** 经 `POST /api/v1/messages/local`（`targe
 | 路径 | 内容 |
 |------|------|
 | `data/llm.db` | LLM 端点与槽位绑定 |
-| `data/crawler/` | 爬取日志、产物、`crawler.db` |
 | `data/rag/` | Chroma 向量库、`rag.db` |
 | `data/memory/` | 记忆向量库与工作记忆 DB |
 | `data/security/security.db` | 安全审计 |
 | `data/executor/` | 执行任务与日志 |
+| `data/env/` | 截图与摄像头照片 |
+| `data/emotion/` | Mind 开关、当前人格 |
+| `data/crawler/` | 爬取日志、产物（扩展） |
+| `data/paper/` | 论文缓存与下载（扩展） |
+| `extensions/` | 已安装扩展代码与 `installed.json` |
 | `keys/` | RSA 客户端密钥 |
 
 清理工具：`python test/test_storage_gui.py`（建议先停止 Agent）。
@@ -355,10 +428,13 @@ Server Center 左侧 **模型配置** 经 `POST /api/v1/messages/local`（`targe
 ```bash
 python test/test_llm_gui.py           # LLM 直连调用
 python test/test_llm_registry_gui.py  # 注册表可视化
-python test/test_crawler_gui.py       # 爬取（可切换是否用模型）
+python test/test_crawler_gui.py       # 爬取（需已安装 crawler 扩展）
 python test/test_env_gui.py           # 环境感知 + Server 推送
 python test/test_rag_gui.py           # RAG 入库与问答
 python test/test_security_gui.py      # 安全检查（需 Server Center）
+python test/test_memory_gui.py        # 记忆观察 / 召回 / 反思
+python test/test_executor_gui.py      # 执行（内嵌安检）
+python test/test_processor_gui.py     # DataBlock 处理
 python test/test_storage_gui.py       # 日志与数据清理
 ```
 
