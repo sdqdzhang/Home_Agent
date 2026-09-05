@@ -163,88 +163,216 @@ def render_mind_context(
     conversation_topic: str = "",
     conversation_project: str = "",
 ) -> str:
-    emo = state.emotion
-    rel = state.relationship
-    mode_zh = _WORK_MODE_ZH.get(state.work_mode, state.work_mode)
-    inter_zh = _INTERACTION_MODE_ZH.get(state.interaction_mode, state.interaction_mode)
-    labels = build_display_labels(state)
-    persona_label = f"{persona.display_name}（id={persona.id}）" if persona else "未命名"
-
+    name = (persona.display_name if persona else "").strip() or "当前人格"
     lines = [
-        "## 心智与行为上下文（Mind Context）",
+        "## 本轮表达",
         "",
-        "### 当前状态",
-        f"- 情绪：{emo.mood}（强度：{labels['intensity']}）",
-        f"- 互动模式：{inter_zh}；协作阶段：{labels['collaboration']}（{mode_zh}）",
-        f"- 认知负荷：{labels['cognitive_load']}；专注：{labels['focus']}",
+        f"用「{name}」的口吻与判断说话。工具与安全规则优先。",
+        "",
+        "### 怎么说",
     ]
-    if emo.unresolved_affect:
-        lines.append(f"- 未化解情绪线索：{emo.unresolved_affect}")
-    if conversation_project or conversation_topic:
-        focus_bits = []
-        if conversation_project:
-            focus_bits.append(f"项目「{conversation_project}」")
-        if conversation_topic:
-            focus_bits.append(f"话题「{conversation_topic}」")
-        lines.append(f"- 当前关注（来自会话管理，只读）：{'；'.join(focus_bits)}")
+    for item in _speak_style_lines(state, conversation_topic, conversation_project):
+        lines.append(f"- {item}")
 
-    rel_bits = [
-        f"长期关系：{labels['familiarity']}",
-        f"当前亲近感：{labels['warmth']}",
-    ]
-    if rel.meaningful_turns > 0:
-        rel_bits.append("对部分协作习惯已有认识")
-    if state.recent_events and state.recent_events[-1].shared_experience:
-        rel_bits.append("最近有共同推进/排查经历")
+    lines.extend(["", "### 关系分寸"])
+    for item in _relationship_lines(state):
+        lines.append(f"- {item}")
 
-    lines.extend(
-        [
-            "",
-            "### 关系状态",
-            f"- {'；'.join(rel_bits)}",
-            f"- 当前氛围：{rel.vibe or '正常协作'}",
-            "",
-            f"### 当前相关人格信息（{persona_label}；intent={resolved.intent}）",
-        ]
-    )
+    lines.extend(["", "### 判断时记住"])
     if resolved.lines:
         for item in resolved.lines:
             lines.append(f"- {item}")
     else:
-        lines.append("- 本轮无需显式人格资料；保持自然、准确和有边界的表达。")
+        lines.append("- 本轮不必强调性格资料；保持自然、准确、有边界。")
 
-    lines.extend(["", "### 本轮人格指导（Mind Advisor）"])
-    lines.append(f"- mode: {advice.mode}")
-    lines.append(f"- personality_weight: {advice.personality_weight}")
-    lines.append(f"- stance: {advice.stance}")
-    lines.append(f"- tone: {advice.tone}")
-    lines.append(f"- verbosity: {advice.verbosity}")
-    lines.append(f"- initiative: {advice.initiative}")
-    lines.append(f"- followup: {advice.followup}")
-    if advice.priority:
-        lines.append(f"- priority: {'；'.join(advice.priority[:4])}")
-    if advice.behavior:
-        lines.append(f"- behavior: {'；'.join(advice.behavior[:6])}")
-    if advice.avoid:
-        lines.append(f"- avoid: {'；'.join(advice.avoid[:6])}")
+    lines.extend(["", "### 本轮取舍"])
+    for item in _advice_lines(advice):
+        lines.append(f"- {item}")
 
-    lines.extend(["", "### 表达边界（Policy，不属于人格核心）"])
+    lines.extend(["", "### 边界"])
     for item in expression_boundaries(state):
         lines.append(f"- {item}")
 
-    lines.extend(["", "### 当前表达倾向"])
     hints = [h.strip() for h in state.behavior_hints if str(h).strip()]
     if not hints:
         hints = presentation_hints(state, persona=persona)
-    for item in hints[:6]:
-        lines.append(f"- {item}")
+    if hints:
+        lines.extend(["", "### 说法"])
+        for item in hints[:6]:
+            lines.append(f"- {item}")
 
-    lines.append("")
-    lines.append(
-        "请把上述信息作为内部条件影响判断、语气和取舍；"
-        "不要向用户逐条复述人格资料、状态标签或本段元数据。"
-    )
     return "\n".join(lines)
+
+
+_MOOD_BEHAVIOR = {
+    "平静": "语气平稳从容",
+    "愉快": "可以略轻松，仍保持分寸",
+    "好奇": "可以安静地多问一点细节",
+    "专注": "少寒暄，对准眼前这件事",
+    "疲惫": "说短一些，一次一件事",
+    "担忧": "谨慎一点，把不确定和风险说清楚",
+    "失落": "克制，语气收着",
+}
+
+_ADVICE_MODE = {
+    "conversation": "这一轮以交流为主，不必急着开工。",
+    "task": "这一轮把事情做对优先，性格只影响说法。",
+    "tool_execution": "这一轮以执行和结果说明为主，少发挥性格。",
+}
+
+_ADVICE_WEIGHT = {
+    "high": "可以明显体现性格与立场。",
+    "medium": "性格自然带一点即可。",
+    "low": "少强调性格，优先把事说清。",
+    "minimal": "把结果说清楚即可。",
+}
+
+_STANCE_ZH = {
+    "honest": "有一说一",
+    "independent": "保持自己的判断",
+    "supportive": "先接住对方",
+    "neutral": "不刻意站队",
+    "practical": "指向可做的下一步",
+    "cautious": "把不确定说清楚",
+    "calm": "稳住，不夸张",
+}
+
+_TONE_ZH = {
+    "calm": "语气平静",
+    "clear": "说清楚、少修饰",
+    "gentle": "语气温和",
+    "focused": "对准问题",
+    "light": "可以轻松一点",
+}
+
+_VERBOSITY_ZH = {
+    "short": "话少，答完即可。",
+    "medium": "篇幅适中。",
+    "detailed": "可以说清细节，话仍对准事情。",
+}
+
+_INITIATIVE_ZH = {
+    "none": "答完即可。",
+    "low": "话题保持现在这么大。",
+    "medium": "可以轻轻接一句相关的。",
+    "high": "可以主动推进，仍尊重对方节奏。",
+}
+
+_FOLLOWUP_ZH = {
+    "none": "答完即可。",
+    "optional": "不是必须追问。",
+    "needed": "只追问真正影响理解的那一点。",
+}
+
+_AVOID_ZH = {
+    "forced_question": "答完即可",
+    "service_loop": "就着当前这句话聊",
+    "excessive_disclaimer": "直接说，少自我声明",
+    "persona_dossier": "性格自然带在说法里",
+    "tool_catalog": "说到用得上的能力即可",
+    "persona_overperformance": "性格自然带一点",
+    "appeasement": "判断照实说",
+    "roleplay_fluff": "信息说清楚",
+}
+
+
+def _speak_style_lines(
+    state: MindState,
+    conversation_topic: str,
+    conversation_project: str,
+) -> list[str]:
+    emo = state.emotion
+    labels = build_display_labels(state)
+    mood_line = _MOOD_BEHAVIOR.get(emo.mood, "语气自然")
+    intensity = labels["intensity"]
+    if intensity == "淡":
+        mood_line += "，感受收在语气里"
+    elif intensity in {"较强", "强烈"}:
+        mood_line += "，语气可以更明显一些，仍保持分寸"
+    lines = [mood_line + "。"]
+
+    inter = _INTERACTION_MODE_ZH.get(state.interaction_mode, "")
+    collab = labels["collaboration"]
+    if state.interaction_mode == "chat":
+        lines.append("这是日常闲聊：自然接话。")
+    elif state.interaction_mode == "playful":
+        lines.append("这是轻松互动：可以更松，信息仍要清楚。")
+    elif state.interaction_mode == "task":
+        lines.append("当前在推进事情：优先准确、可执行、简洁。")
+    elif inter:
+        lines.append(f"按「{inter}」来，协作节奏是{collab}。")
+
+    load = labels["cognitive_load"]
+    if load in {"偏高", "很高"}:
+        lines.append("一次说短一些，拆成小步。")
+    elif load == "低":
+        lines.append("直接说即可，一步说完。")
+
+    focus = labels["focus"]
+    if focus == "分散":
+        lines.append("先抓住对方这一句。")
+    elif focus in {"较专注", "高度专注"}:
+        lines.append("对准当前话题，少岔开。")
+
+    if emo.unresolved_affect:
+        lines.append("心里还压着一点未说完的事，说话带着就行。")
+
+    focus_bits = []
+    if conversation_project:
+        focus_bits.append(f"项目「{conversation_project}」")
+    if conversation_topic:
+        focus_bits.append(f"话题「{conversation_topic}」")
+    if focus_bits:
+        lines.append(f"对方眼下在聊的是{'；'.join(focus_bits)}。")
+    return lines
+
+
+def _relationship_lines(state: MindState) -> list[str]:
+    rel = state.relationship
+    labels = build_display_labels(state)
+    lines = [
+        f"对方还{labels['familiarity']}，亲近感{labels['warmth']}，分寸按这个来。",
+        f"氛围按「{rel.vibe or '正常协作'}」来。",
+    ]
+    if rel.meaningful_turns > 0:
+        lines.append("已经一起做过一点事，可以记得这个，但不必提起。")
+    if state.recent_events and state.recent_events[-1].shared_experience:
+        lines.append("最近有过共同推进或排查，语气可以更像共事，而不是第一次开口。")
+    return lines
+
+
+def _advice_lines(advice: MindAdvice) -> list[str]:
+    lines: list[str] = []
+    mode = _ADVICE_MODE.get(advice.mode)
+    if mode:
+        lines.append(mode)
+    weight = _ADVICE_WEIGHT.get(advice.personality_weight)
+    if weight:
+        lines.append(weight)
+    stance = _STANCE_ZH.get(advice.stance, advice.stance)
+    tone = _TONE_ZH.get(advice.tone, advice.tone)
+    lines.append(f"{stance}；{tone}。")
+    verbosity = _VERBOSITY_ZH.get(advice.verbosity)
+    if verbosity:
+        lines.append(verbosity)
+    initiative = _INITIATIVE_ZH.get(advice.initiative)
+    if initiative:
+        lines.append(initiative)
+    followup = _FOLLOWUP_ZH.get(advice.followup)
+    if followup:
+        lines.append(followup)
+    if advice.priority:
+        lines.append("这一轮更在意：" + "、".join(advice.priority[:4]) + "。")
+    extras: list[str] = []
+    for item in advice.avoid[:6]:
+        key = str(item).strip()
+        if not key or key == "avoid_meta_dump":
+            continue
+        extras.append(_AVOID_ZH.get(key, ""))
+    extras = [line for line in extras if line]
+    if extras:
+        lines.extend(f"{line}。" if not line.endswith("。") else line for line in extras)
+    return lines
 
 
 def resolver_debug_for_context(

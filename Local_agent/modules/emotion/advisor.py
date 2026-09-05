@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from modules.emotion.model import ADVISOR_SYSTEM
+from modules.emotion.policy import AVOID_META_DUMP
 from modules.emotion.resolver import ResolvedPersonaContext
 from modules.emotion.schemas import MindAdvice, MindState
 from shared.llm import get_llm_client
@@ -41,22 +42,27 @@ class MindAdvisor:
             conversation_topic=conversation_topic,
             conversation_project=conversation_project,
         )
-        try:
-            llm = get_llm_client(self.slot_key)
-            data = await llm.chat_json(
-                [
-                    {"role": "system", "content": ADVISOR_SYSTEM},
-                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-                ]
-            )
-            advice = MindAdvice.model_validate(data)
-            advice.source = "advisor"
-            return _normalize_advice(advice, fallback=fallback)
-        except Exception as exc:
-            logger.exception("Mind Advisor failed")
-            fallback.source = "fallback"
-            fallback.reason = f"advisor fallback: {exc}"
-            return fallback
+        messages = [
+            {"role": "system", "content": ADVISOR_SYSTEM},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ]
+        last_error: BaseException | None = None
+        slots = [self.slot_key]
+        if self.slot_key != "main.chat":
+            slots.append("main.chat")
+        for slot in slots:
+            try:
+                llm = get_llm_client(slot)
+                data = await llm.chat_json(messages)
+                advice = MindAdvice.model_validate(data)
+                advice.source = "advisor"
+                return _normalize_advice(advice, fallback=fallback)
+            except Exception as exc:
+                last_error = exc
+                logger.exception("Mind Advisor failed slot=%s", slot)
+        fallback.source = "fallback"
+        fallback.reason = _advisor_error_reason(last_error)
+        return fallback
 
 
 def should_call_advisor(*, state: MindState, intent: str, user_text: str = "") -> bool:
@@ -71,7 +77,7 @@ def should_call_advisor(*, state: MindState, intent: str, user_text: str = "") -
 
 def default_advice(*, state: MindState, intent: str) -> MindAdvice:
     if intent == "task" or state.work_mode in ("deep_tech", "executing"):
-        return MindAdvice(
+        advice = MindAdvice(
             mode="task",
             personality_weight="low",
             stance="practical",
@@ -85,8 +91,8 @@ def default_advice(*, state: MindState, intent: str) -> MindAdvice:
             reason="任务语境：人格降权，只影响表达与判断取舍。",
             source="program",
         )
-    if intent == "self_intro":
-        return MindAdvice(
+    elif intent == "self_intro":
+        advice = MindAdvice(
             mode="conversation",
             personality_weight="high",
             stance="calm",
@@ -100,8 +106,8 @@ def default_advice(*, state: MindState, intent: str) -> MindAdvice:
             reason="自我介绍：说明是谁、怎么协作，点到性格即可。",
             source="program",
         )
-    if intent == "disagreement":
-        return MindAdvice(
+    elif intent == "disagreement":
+        advice = MindAdvice(
             mode="conversation",
             personality_weight="high",
             stance="independent",
@@ -115,8 +121,8 @@ def default_advice(*, state: MindState, intent: str) -> MindAdvice:
             reason="分歧语境：真实判断优先，表达保持克制。",
             source="program",
         )
-    if intent == "persona_question":
-        return MindAdvice(
+    elif intent == "persona_question":
+        advice = MindAdvice(
             mode="conversation",
             personality_weight="high",
             stance="honest",
@@ -130,20 +136,22 @@ def default_advice(*, state: MindState, intent: str) -> MindAdvice:
             reason="人格问题：可以表达立场，但不复述内部资料。",
             source="program",
         )
-    return MindAdvice(
-        mode="conversation",
-        personality_weight="medium",
-        stance="neutral",
-        tone="calm",
-        verbosity="short",
-        initiative="low",
-        followup="optional",
-        priority=["naturalness"],
-        behavior=["respond_naturally", "avoid_forced_question"],
-        avoid=["service_loop", "excessive_disclaimer"],
-        reason="普通交流：自然回应，不主动制造需求。",
-        source="program",
-    )
+    else:
+        advice = MindAdvice(
+            mode="conversation",
+            personality_weight="medium",
+            stance="neutral",
+            tone="calm",
+            verbosity="short",
+            initiative="low",
+            followup="optional",
+            priority=["naturalness"],
+            behavior=["respond_naturally", "avoid_forced_question"],
+            avoid=["service_loop", "excessive_disclaimer"],
+            reason="普通交流：自然回应，不主动制造需求。",
+            source="program",
+        )
+    return _with_meta_avoid(advice)
 
 
 def _advisor_payload(
@@ -178,6 +186,24 @@ def _advisor_payload(
     }
 
 
+def _with_meta_avoid(advice: MindAdvice) -> MindAdvice:
+    avoid = [str(item).strip() for item in advice.avoid if str(item).strip()]
+    if AVOID_META_DUMP not in avoid:
+        avoid.append(AVOID_META_DUMP)
+    advice.avoid = avoid
+    return advice
+
+
+def _advisor_error_reason(exc: BaseException | None) -> str:
+    raw = str(exc or "llm_error")
+    lowered = raw.lower()
+    if "api_key" in lowered or "invalid api" in lowered or "401" in lowered:
+        return "advisor fallback: auth_error"
+    if len(raw) > 80:
+        return "advisor fallback: llm_error"
+    return f"advisor fallback: {raw}"
+
+
 def _normalize_advice(advice: MindAdvice, *, fallback: MindAdvice) -> MindAdvice:
     if advice.mode == "tool_execution":
         advice.personality_weight = "minimal"
@@ -190,4 +216,4 @@ def _normalize_advice(advice: MindAdvice, *, fallback: MindAdvice) -> MindAdvice
         advice.avoid = list(fallback.avoid)
     if not advice.reason:
         advice.reason = fallback.reason
-    return advice
+    return _with_meta_avoid(advice)

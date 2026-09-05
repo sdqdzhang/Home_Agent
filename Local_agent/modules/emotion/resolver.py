@@ -298,7 +298,4 @@ def _select(candidates: list[PersonaCandidate], *, max_items: int, max_chars: in
 
 
 def _render_candidate(candidate: PersonaCandidate) -> str:
-    text = candidate.text.strip()
-    if candidate.strength is not None and "tendency" in candidate.tags:
-        return f"{text}（倾向强度 {candidate.strength:.2f}）"
-    return text
+    return candidate.text.strip()
