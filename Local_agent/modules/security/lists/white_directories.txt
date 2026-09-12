@@ -3,3 +3,6 @@
 
 # auto-added by executor on startup
 C:/Users/qd_zh/Desktop/项目/homeagent/Local_agent/workspace/
+
+# auto-added by executor on startup
+E:/try/Agent/homeagent/Home_Agent/Local_agent/

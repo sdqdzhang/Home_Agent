@@ -110,10 +110,10 @@ class MainAssistant:
             parts.append(
                 "\n\n## 当前可用工具（以本段和 tools 参数为准）\n"
                 + "、".join(names)
-                + "\n不要调用未列出的函数。"
+                + "\n只使用这些。"
             )
         else:
-            parts.append("\n\n## 当前可用工具\n（无）\n不要调用任何工具函数。")
+            parts.append("\n\n## 当前可用工具\n（无）\n本轮直接回答。")
         mind_text = ""
         if mind_ctx:
             mind_text = str(mind_ctx.get("mind_context") or "").strip()
@@ -133,7 +133,7 @@ class MainAssistant:
                 f"{summary or '（无）'}"
             )
             parts.append(
-                "\n\n## Open Tasks（仅供参考；是否继续由你根据用户当前话决定，不要自动开跑）\n"
+                "\n\n## Open Tasks（供参考；是否继续看用户这一句）\n"
                 f"{json.dumps(open_tasks, ensure_ascii=False)}"
             )
 
@@ -144,9 +144,9 @@ class MainAssistant:
             parts.append(
                 "\n\n## 长期记忆（可选参考）\n"
                 "以下是系统检索到的用户相关记忆。规则：\n"
-                "- 与当前问题相关才使用；\n"
-                "- 无关则忽略，不要主动提起，也不要硬往记忆话题上靠；\n"
-                "- 不要把记忆当成必须完成的任务列表。\n\n"
+                "- 只在与当前问题相关时参考；\n"
+                "- 无关就当这段不存在；\n"
+                "- 把它当作背景，而不是待办清单。\n\n"
                 f"{memory_text}"
             )
 
@@ -172,7 +172,7 @@ class MainAssistant:
             messages.append(
                 {
                     "role": "user",
-                    "content": "请根据刚才的工具结果，用一两句中文向用户说明完成情况。不要调用工具。",
+                    "content": "根据刚才的结果，用一两句中文说明完成情况。",
                 }
             )
         msg = await llm.chat_completion(messages, tools=None, tool_choice=None)
