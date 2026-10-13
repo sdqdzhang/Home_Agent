@@ -1,0 +1,8 @@
+DeepSeek娘 / 神神 WebM（unofficial fan pet）
+Pack: dsh-pet-indesktop assets/characters/shenshen/videos
+  https://github.com/MerZlin/dsh-pet-indesktop
+  via https://github.com/PC2005-cloud/dsh-pet
+Format: 640×360 transparent VP9 WebM (not Live2D Cubism)
+
+Unofficial fan work, not affiliated with DeepSeek / 深度求索.
+Personal / learning use in this sandbox only. Do not redistribute with HomeAgent.

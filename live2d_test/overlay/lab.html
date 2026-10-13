@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>live2d_test · lab</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="lab-body">
+  <header>
+    <h1>神神 · 实验室</h1>
+    <p>按现有 WebM 切姿态。点动作库里的一条就循环播这一条。</p>
+    <div class="row">
+      <button type="button" id="restore">唤出桌宠</button>
+      <button type="button" id="clip-auto">恢复自动闲逛</button>
+    </div>
+  </header>
+
+  <section>
+    <h2>现在在播</h2>
+    <p id="now-playing" class="hint">…</p>
+  </section>
+
+  <section>
+    <h2>姿态</h2>
+    <select id="scene">
+      <option value="auto">自动闲逛</option>
+      <option value="work">写代码 / 吃 Token</option>
+      <option value="think">深度思考</option>
+      <option value="wrap">清点归档</option>
+      <option value="look">东张西望</option>
+      <option value="talk">哼歌说话</option>
+      <option value="rest">打哈欠休息</option>
+    </select>
+  </section>
+
+  <section>
+    <h2>互动</h2>
+    <div class="row" id="quick-acts">
+      <button type="button" data-quick="poke">戳一下</button>
+      <button type="button" data-clip="被吓一跳">被吓一跳</button>
+      <button type="button" data-clip="工作状态-雀跃庆祝">雀跃庆祝</button>
+      <button type="button" data-clip="哈欠连天">哈欠连天</button>
+      <button type="button" data-clip="超大伸懒腰">超大伸懒腰</button>
+      <button type="button" data-clip="女仆屈膝礼仪">女仆屈膝礼仪</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>动作库</h2>
+    <label>筛选
+      <input id="clip-filter" type="text" placeholder="名称关键字" autocomplete="off" />
+    </label>
+    <div id="clip-list" class="clip-list"></div>
+  </section>
+
+  <section>
+    <h2>窗口</h2>
+    <div class="row">
+      <label class="check"><input id="through" type="checkbox" /> 穿透点击</label>
+      <label class="check"><input id="ontop" type="checkbox" checked /> 置顶</label>
+    </div>
+    <label>角色大小 <span id="scale-label">72%</span>
+      <input id="scale" type="range" min="45" max="115" step="1" value="72" />
+    </label>
+  </section>
+  <script src="lab.js"></script>
+</body>
+</html>

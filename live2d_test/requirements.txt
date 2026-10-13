@@ -1,0 +1,2 @@
+PySide6_Essentials>=6.6,<7
+imageio-ffmpeg>=0.4.9

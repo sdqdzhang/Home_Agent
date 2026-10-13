@@ -1,0 +1,5 @@
+.venv/
+__pycache__/
+*.pyc
+overlay/models/**
+!overlay/models/README.md
